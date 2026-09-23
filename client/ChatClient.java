@@ -10,10 +10,6 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
-/**
- * ChatClient quản lý kết nối TCP Socket tới ChatServer.
- * Chịu trách nhiệm gửi các bản tin theo giao thức đã thống nhất và quản lý vòng đời kết nối.
- */
 public class ChatClient {
 
     public interface ChatEventListener {
@@ -44,9 +40,6 @@ public class ChatClient {
         this.eventListener = listener;
     }
 
-    /**
-     * Mở kết nối TCP Socket tới Server và gửi bản tin LOGIN
-     */
     public boolean connect(String host, int port, String username) throws IOException {
         this.serverHost = host;
         this.serverPort = port;
@@ -63,37 +56,26 @@ public class ChatClient {
 
         this.connected = true;
 
-        // Khởi chạy ServerListener trên một luồng riêng để lắng nghe dữ liệu từ Server
         this.serverListener = new ServerListener(reader, this);
         this.listenerThread = new Thread(serverListener, "ServerListener-Thread");
         this.listenerThread.setDaemon(true);
         this.listenerThread.start();
 
-        // Gửi thông điệp LOGIN theo giao thức: LOGIN|<username>
         sendRawMessage("LOGIN|" + username);
 
         return true;
     }
 
-    /**
-     * Gửi tin nhắn chung tới tất cả mọi người trong phòng: MESSAGE|<sender>|<message>
-     */
     public void sendPublicMessage(String message) {
         if (!connected || writer == null) return;
         sendRawMessage("MESSAGE|" + username + "|" + message);
     }
 
-    /**
-     * Gửi tin nhắn riêng tới 1 người: PRIVATE|<sender>|<receiver>|<message>
-     */
     public void sendPrivateMessage(String recipient, String message) {
         if (!connected || writer == null) return;
         sendRawMessage("PRIVATE|" + username + "|" + recipient + "|" + message);
     }
 
-    /**
-     * Gửi yêu cầu đăng xuất: LOGOUT|<username> và ngắt kết nối
-     */
     public void logout() {
         if (connected) {
             sendRawMessage("LOGOUT|" + username);
@@ -101,18 +83,12 @@ public class ChatClient {
         }
     }
 
-    /**
-     * Gửi dữ liệu thô kết thúc bằng ký tự xuống dòng
-     */
     private synchronized void sendRawMessage(String raw) {
         if (writer != null) {
             writer.println(raw);
         }
     }
 
-    /**
-     * Đóng socket và giải phóng tài nguyên
-     */
     public synchronized void disconnect() {
         if (!connected) return;
         connected = false;
@@ -126,11 +102,9 @@ public class ChatClient {
             if (reader != null) reader.close();
             if (socket != null && !socket.isClosed()) socket.close();
         } catch (IOException e) {
-            // Bỏ qua lỗi khi đóng tài nguyên
         }
     }
 
-    // Các hàm callback gọi từ ServerListener để chuyển tiếp tới UI
     void notifyMessage(String sender, String content) {
         if (eventListener != null) {
             eventListener.onMessageReceived(sender, content);

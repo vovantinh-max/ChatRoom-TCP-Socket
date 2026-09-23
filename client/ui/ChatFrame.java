@@ -10,14 +10,6 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
-/**
- * Giao diện phòng chat cao cấp:
- * - Hiển thị tin nhắn dạng bong bóng (Chat Bubble) tương tự Telegram/Messenger
- * - Phân biệt tin nhắn của mình (xanh dương, căn phải), tin nhắn người khác (trắng, căn trái),
- *   tin nhắn riêng (tím nổi bật), thông báo hệ thống (pill ở giữa)
- * - Thanh thành viên online hiển thị avatar tròn và trạng thái trực tuyến
- * - Thao tác chuyển đổi chat chung / chat riêng nhanh chóng
- */
 public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
     private final ChatClient client;
@@ -65,7 +57,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         JPanel rootPanel = new JPanel(new BorderLayout());
         rootPanel.setBackground(UIUtils.COLOR_BACKGROUND);
 
-        // 1. THANH ĐIỀU HƯỚNG TRÊN CÙNG (HEADER)
         JPanel headerPanel = new JPanel(new BorderLayout(15, 0));
         headerPanel.setBackground(UIUtils.COLOR_SURFACE);
         headerPanel.setBorder(BorderFactory.createCompoundBorder(
@@ -73,7 +64,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             new EmptyBorder(10, 20, 10, 20)
         ));
 
-        // Thông tin người dùng hiện tại và trạng thái
         JPanel userInfoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
         userInfoPanel.setOpaque(false);
 
@@ -97,7 +87,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         userInfoPanel.add(userTextCol);
         headerPanel.add(userInfoPanel, BorderLayout.WEST);
 
-        // Nút Đăng xuất
         UIUtils.ModernButton btnLogout = new UIUtils.ModernButton(
             "Đăng xuất",
             new Color(254, 242, 242),
@@ -120,14 +109,12 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
         rootPanel.add(headerPanel, BorderLayout.NORTH);
 
-        // 2. KHU VỰC CHÍNH (NỘI DUNG CHAT + DANH SÁCH USER)
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         splitPane.setResizeWeight(0.76);
         splitPane.setContinuousLayout(true);
         splitPane.setBorder(null);
         splitPane.setDividerSize(1);
 
-        // 2.1 Khung hiển thị tin nhắn (Bong bóng chat)
         messagesBox = new JPanel();
         messagesBox.setLayout(new BoxLayout(messagesBox, BoxLayout.Y_AXIS));
         messagesBox.setBackground(UIUtils.COLOR_BACKGROUND);
@@ -140,12 +127,10 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         chatScroll.setBackground(UIUtils.COLOR_BACKGROUND);
         splitPane.setLeftComponent(chatScroll);
 
-        // 2.2 Cột danh sách người dùng online
         JPanel sidebarPanel = new JPanel(new BorderLayout());
         sidebarPanel.setBackground(UIUtils.COLOR_SURFACE);
         sidebarPanel.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, UIUtils.COLOR_BORDER));
 
-        // Tiêu đề sidebar
         JPanel sidebarHeader = new JPanel(new BorderLayout());
         sidebarHeader.setOpaque(false);
         sidebarHeader.setBorder(new EmptyBorder(14, 16, 12, 16));
@@ -162,7 +147,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
         sidebarPanel.add(sidebarHeader, BorderLayout.NORTH);
 
-        // Danh sách user với CellRenderer đẹp mắt
         userListModel = new DefaultListModel<>();
         userListModel.addElement(client.getUsername());
 
@@ -186,7 +170,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         userScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         sidebarPanel.add(userScroll, BorderLayout.CENTER);
 
-        // Ghi chú dưới chân sidebar
         JPanel sidebarFooter = new JPanel(new BorderLayout());
         sidebarFooter.setOpaque(false);
         sidebarFooter.setBorder(new EmptyBorder(10, 14, 12, 14));
@@ -199,7 +182,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
         rootPanel.add(splitPane, BorderLayout.CENTER);
 
-        // 3. KHU VỰC NHẬP LIỆU DƯỚI CÙNG (INPUT BAR)
         JPanel bottomArea = new JPanel();
         bottomArea.setLayout(new BoxLayout(bottomArea, BoxLayout.Y_AXIS));
         bottomArea.setBackground(UIUtils.COLOR_SURFACE);
@@ -208,7 +190,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             new EmptyBorder(10, 18, 12, 18)
         ));
 
-        // 3.1 Thanh trạng thái người nhận (Chat chung / Chat riêng)
         recipientStatusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         recipientStatusPanel.setOpaque(false);
         recipientStatusPanel.setBorder(new EmptyBorder(0, 0, 8, 0));
@@ -237,7 +218,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         });
         recipientStatusPanel.add(btnCancelPrivate);
 
-        // Thanh phím tắt cảm xúc nhanh
         JPanel emojiPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         emojiPanel.setOpaque(false);
         String[] quickEmojis = {":)", ":D", "<3", "(y)", "^^", "O_o"};
@@ -263,7 +243,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         recipientRow.add(emojiPanel, BorderLayout.EAST);
         bottomArea.add(recipientRow);
 
-        // 3.2 Hàng nhập tin nhắn và nút Gửi
         JPanel inputRow = new JPanel(new BorderLayout(10, 0));
         inputRow.setOpaque(false);
 
@@ -280,7 +259,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
         setContentPane(rootPanel);
 
-        // Lắng nghe sự kiện gửi
         ActionListener sendAction = e -> performSendMessage();
         btnSend.addActionListener(sendAction);
         txtInput.addActionListener(sendAction);
@@ -362,10 +340,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             }
         }
     }
-
-    // =========================================================================
-    // Các phương thức tạo bong bóng chat (Chat Bubbles)
-    // =========================================================================
 
     public void addPublicMessage(String sender, String message) {
         boolean isMe = sender.equalsIgnoreCase(client.getUsername());
@@ -516,10 +490,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         return panel;
     }
 
-    // =========================================================================
-    // Callbacks từ ChatClient
-    // =========================================================================
-
     @Override
     public void onMessageReceived(String sender, String message) {
         SwingUtilities.invokeLater(() -> addPublicMessage(sender, message));
@@ -581,9 +551,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         });
     }
 
-    /**
-     * Renderer danh sách người dùng với Avatar tròn và điểm chỉ báo online
-     */
     private class UserCellRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
@@ -600,10 +567,8 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
                 itemPanel.setBackground(UIUtils.COLOR_SURFACE);
             }
 
-            // Avatar
             itemPanel.add(createAvatarComponent(username, 28), BorderLayout.WEST);
 
-            // Tên và huy hiệu (Bạn)
             JPanel namePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
             namePanel.setOpaque(false);
 
@@ -621,7 +586,6 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
             itemPanel.add(namePanel, BorderLayout.CENTER);
 
-            // Chấm xanh online
             JLabel lblDot = new JLabel("●");
             lblDot.setFont(new Font("Segoe UI", Font.PLAIN, 10));
             lblDot.setForeground(UIUtils.COLOR_ONLINE);

@@ -6,10 +6,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * ServerListener chạy trên một luồng riêng biệt để liên tục nhận dữ liệu từ Server,
- * phân tích thông điệp theo giao thức đã thỏa thuận và thông báo cho ChatClient.
- */
 public class ServerListener implements Runnable {
 
     private final BufferedReader reader;
@@ -39,13 +35,6 @@ public class ServerListener implements Runnable {
         }
     }
 
-    /**
-     * Phân tích các thông điệp nhận từ Server theo giao thức:
-     * - USER_LIST|user1,user2,user3
-     * - MESSAGE|sender|content
-     * - PRIVATE|sender|receiver|content
-     * - LOGOUT|user
-     */
     private void processMessage(String message) {
         String[] parts = message.split("\\|", -1);
         String command = parts[0];
@@ -111,7 +100,6 @@ public class ServerListener implements Runnable {
                 break;
 
             default:
-                // Nếu bản tin không theo định dạng chuẩn thì hiển thị như thông báo hệ thống
                 client.notifySystemMessage(message);
                 break;
         }

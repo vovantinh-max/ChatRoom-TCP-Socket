@@ -8,13 +8,6 @@ import java.awt.*;
 import java.awt.event.ActionListener;
 import java.io.IOException;
 
-/**
- * Giao diện Đăng nhập hiện đại:
- * - Thẻ màu trắng bo tròn (Card) nổi bật trên nền Slate nhẹ
- * - Logo phòng chat vẽ trực tiếp bằng Graphics2D
- * - Trường nhập liệu bo tròn hỗ trợ placeholder và hiệu ứng viền phát sáng
- * - Nút hành động hiện đại với hiệu ứng rê chuột
- */
 public class LoginFrame extends JFrame {
 
     private UIUtils.ModernTextField txtUsername;
@@ -38,13 +31,11 @@ public class LoginFrame extends JFrame {
         JPanel rootPanel = new JPanel(new GridBagLayout());
         rootPanel.setBackground(UIUtils.COLOR_BACKGROUND);
 
-        // Thẻ trắng bo góc ở giữa (Card Panel)
         UIUtils.RoundedPanel card = new UIUtils.RoundedPanel(UIUtils.COLOR_SURFACE, UIUtils.COLOR_BORDER, 16);
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
         card.setBorder(new EmptyBorder(28, 36, 28, 36));
         card.setPreferredSize(new Dimension(400, 480));
 
-        // 1. Logo vẽ vector và Tiêu đề ứng dụng
         JPanel logoPanel = new JPanel() {
             @Override
             protected void paintComponent(Graphics g) {
@@ -57,11 +48,9 @@ public class LoginFrame extends JFrame {
                 int x = cx - size / 2;
                 int y = 0;
 
-                // Vòng tròn nền xanh
                 g2.setColor(UIUtils.COLOR_PRIMARY);
                 g2.fillOval(x, y, size, size);
 
-                // Biểu tượng bong bóng chat trắng
                 g2.setColor(Color.WHITE);
                 g2.fillRoundRect(x + 13, y + 13, 26, 17, 7, 7);
                 int[] px = {x + 16, x + 23, x + 16};
@@ -93,14 +82,12 @@ public class LoginFrame extends JFrame {
 
         card.add(Box.createVerticalStrut(24));
 
-        // Form fields container
         JPanel formContainer = new JPanel();
         formContainer.setLayout(new BoxLayout(formContainer, BoxLayout.Y_AXIS));
         formContainer.setOpaque(false);
         formContainer.setAlignmentX(Component.CENTER_ALIGNMENT);
         formContainer.setMaximumSize(new Dimension(330, 200));
 
-        // 2. Ô nhập Tên đăng nhập
         JLabel lblUser = new JLabel("Tên hiển thị của bạn");
         lblUser.setFont(UIUtils.FONT_BOLD);
         lblUser.setForeground(UIUtils.COLOR_TEXT_MAIN);
@@ -114,12 +101,10 @@ public class LoginFrame extends JFrame {
 
         formContainer.add(Box.createVerticalStrut(14));
 
-        // 3. Hàng nhập IP và Port
         JPanel serverConfigPanel = new JPanel(new GridLayout(1, 2, 12, 0));
         serverConfigPanel.setOpaque(false);
         serverConfigPanel.setMaximumSize(new Dimension(330, 65));
 
-        // Cột IP
         JPanel ipCol = new JPanel();
         ipCol.setLayout(new BoxLayout(ipCol, BoxLayout.Y_AXIS));
         ipCol.setOpaque(false);
@@ -134,7 +119,6 @@ public class LoginFrame extends JFrame {
         ipCol.add(txtHost);
         serverConfigPanel.add(ipCol);
 
-        // Cột Port
         JPanel portCol = new JPanel();
         portCol.setLayout(new BoxLayout(portCol, BoxLayout.Y_AXIS));
         portCol.setOpaque(false);
@@ -154,7 +138,6 @@ public class LoginFrame extends JFrame {
 
         card.add(Box.createVerticalStrut(8));
 
-        // 4. Nhãn trạng thái / báo lỗi
         lblStatus = new JLabel(" ");
         lblStatus.setFont(UIUtils.FONT_TINY);
         lblStatus.setForeground(UIUtils.COLOR_DANGER);
@@ -163,7 +146,6 @@ public class LoginFrame extends JFrame {
 
         card.add(Box.createVerticalStrut(12));
 
-        // 5. Nút đăng nhập chính
         btnConnect = new UIUtils.ModernButton(
             "VÀO PHÒNG CHAT >",
             UIUtils.COLOR_PRIMARY,
@@ -178,7 +160,6 @@ public class LoginFrame extends JFrame {
         rootPanel.add(card);
         setContentPane(rootPanel);
 
-        // Lắng nghe sự kiện
         ActionListener connectAction = e -> performConnect();
         btnConnect.addActionListener(connectAction);
         txtUsername.addActionListener(connectAction);
