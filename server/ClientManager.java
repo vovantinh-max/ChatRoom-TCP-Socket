@@ -64,4 +64,18 @@ public class ClientManager {
 
         return false;
     }
+    // Lấy danh sách username đang online
+    public Set<String> getUsernames() {
+
+        Set<String> usernames = ConcurrentHashMap.newKeySet();
+
+        for (ClientHandler client : clients) {
+
+            if (client.getUsername() != null) {
+            usernames.add(client.getUsername());
+            }
+        }
+
+        return usernames;
+    }
 }

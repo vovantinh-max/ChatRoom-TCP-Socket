@@ -8,71 +8,181 @@ public class ChatServer {
 
     private static final int PORT = 5000;
 
-    // Quản lý toàn bộ Client
-    private static final ClientManager clientManager =
-            new ClientManager();
+    private final ClientManager clientManager;
 
-    public static void main(String[] args) {
+    private ServerSocket serverSocket;
 
-        System.out.println("=================================");
-        System.out.println("       TCP CHAT ROOM SERVER");
-        System.out.println("=================================");
+    private volatile boolean running = false;
 
-        try (ServerSocket serverSocket =
-                     new ServerSocket(PORT)) {
+    private ServerGUI serverGUI;
 
-            System.out.println(
-                    "Server da khoi dong!"
+    public ChatServer(
+            ClientManager clientManager,
+            ServerGUI serverGUI) {
+
+        this.clientManager = clientManager;
+
+        this.serverGUI = serverGUI;
+    }
+
+    // =========================
+    // START SERVER
+    // =========================
+
+    public boolean startServer() {
+
+        if (running) {
+            return false;
+        }
+
+        try {
+
+            serverSocket =
+                    new ServerSocket(PORT);
+
+            running = true;
+
+            Thread serverThread =
+                    new Thread(
+                            this::acceptClients
+                    );
+
+            serverThread.start();
+
+            return true;
+
+        } catch (IOException e) {
+
+            if (serverGUI != null) {
+
+                serverGUI.appendLog(
+                        "Không thể khởi động Server: "
+                                + e.getMessage()
+                );
+            }
+
+            return false;
+        }
+    }
+
+    // =========================
+    // CHỜ CLIENT
+    // =========================
+
+    private void acceptClients() {
+
+        if (serverGUI != null) {
+
+            serverGUI.appendLog(
+                    "Server đang chờ Client kết nối..."
             );
+        }
 
-            System.out.println(
-                    "Port: " + PORT
-            );
+        while (running) {
 
-            System.out.println(
-                    "Dang cho Client ket noi..."
-            );
+            try {
 
-            while (true) {
-
-                // Chờ Client
                 Socket clientSocket =
                         serverSocket.accept();
 
-                System.out.println(
-                        "Client moi ket noi: "
-                                + clientSocket
-                                .getInetAddress()
-                                .getHostAddress()
-                );
+                if (serverGUI != null) {
 
-                // Tạo ClientHandler
+                    serverGUI.appendLog(
+                            "Client mới kết nối: "
+                                    + clientSocket
+                                    .getInetAddress()
+                                    .getHostAddress()
+                    );
+                }
+
                 ClientHandler clientHandler =
                         new ClientHandler(
                                 clientSocket,
                                 clientManager
                         );
 
-                // Tạo Thread riêng
                 Thread clientThread =
-                        new Thread(clientHandler);
+                        new Thread(
+                                clientHandler
+                        );
 
                 clientThread.start();
 
-                System.out.println(
-                        "Da tao Thread xu ly Client."
-                );
+            } catch (IOException e) {
+
+                if (running &&
+                        serverGUI != null) {
+
+                    serverGUI.appendLog(
+                            "Lỗi nhận Client: "
+                                    + e.getMessage()
+                    );
+                }
+            }
+        }
+    }
+
+    // =========================
+    // STOP SERVER
+    // =========================
+
+    public void stopServer() {
+
+        running = false;
+
+        try {
+
+            if (serverSocket != null &&
+                    !serverSocket.isClosed()) {
+
+                serverSocket.close();
             }
 
         } catch (IOException e) {
 
-            System.out.println(
-                    "Khong the khoi dong Server!"
-            );
+            if (serverGUI != null) {
 
-            System.out.println(
-                    "Loi: " + e.getMessage()
-            );
+                serverGUI.appendLog(
+                        "Lỗi khi dừng Server: "
+                                + e.getMessage()
+                );
+            }
         }
+    }
+
+    public boolean isRunning() {
+        return running;
+    }
+
+    public ClientManager getClientManager() {
+        return clientManager;
+    }
+
+    // =========================
+    // MAIN
+    // =========================
+
+    public static void main(String[] args) {
+
+        javax.swing.SwingUtilities.invokeLater(() -> {
+
+            ClientManager clientManager =
+                    new ClientManager();
+
+            ServerGUI serverGUI =
+                    new ServerGUI(
+                            clientManager
+                    );
+
+            ChatServer chatServer =
+                    new ChatServer(
+                            clientManager,
+                            serverGUI
+                    );
+
+            serverGUI.setChatServer(
+                    chatServer
+            );
+        });
     }
 }
