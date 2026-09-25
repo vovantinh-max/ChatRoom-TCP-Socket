@@ -9,23 +9,32 @@ public class ChatServer {
     private static final int PORT = 5000;
 
     public static void main(String[] args) {
-        System.out.println("Starting Chat Server...");
+
+        System.out.println("=================================");
+        System.out.println("       TCP CHAT ROOM SERVER");
+        System.out.println("=================================");
 
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
 
-            System.out.println("Server is running on port " + PORT);
+            System.out.println("Server da khoi dong!");
+            System.out.println("Port: " + PORT);
+            System.out.println("Dang cho Client ket noi...");
 
             while (true) {
+
                 Socket clientSocket = serverSocket.accept();
 
                 System.out.println(
-                    "Client connected: "
-                    + clientSocket.getInetAddress().getHostAddress()
+                        "Client ket noi: "
+                                + clientSocket.getInetAddress()
+                                        .getHostAddress()
                 );
             }
 
         } catch (IOException e) {
-            System.out.println("Server error: " + e.getMessage());
+
+            System.out.println("Khong the khoi dong Server!");
+            System.out.println("Loi: " + e.getMessage());
         }
     }
 }
