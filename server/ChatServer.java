@@ -10,6 +10,12 @@ public class ChatServer {
 
     private final ClientManager clientManager;
 
+    // =========================
+    // ROOM MANAGER
+    // =========================
+
+    private final RoomManager roomManager;
+
     private ServerSocket serverSocket;
 
     private volatile boolean running = false;
@@ -18,11 +24,14 @@ public class ChatServer {
 
     public ChatServer(
             ClientManager clientManager,
-            ServerGUI serverGUI) {
+            ServerGUI serverGUI,
+            RoomManager roomManager) {
 
         this.clientManager = clientManager;
 
         this.serverGUI = serverGUI;
+
+        this.roomManager = roomManager;
     }
 
     // =========================
@@ -95,10 +104,15 @@ public class ChatServer {
                     );
                 }
 
+                // =========================
+                // TẠO CLIENT HANDLER
+                // =========================
+
                 ClientHandler clientHandler =
                         new ClientHandler(
                                 clientSocket,
-                                clientManager
+                                clientManager,
+                                roomManager
                         );
 
                 Thread clientThread =
@@ -150,12 +164,20 @@ public class ChatServer {
         }
     }
 
+    // =========================
+    // GETTERS
+    // =========================
+
     public boolean isRunning() {
         return running;
     }
 
     public ClientManager getClientManager() {
         return clientManager;
+    }
+
+    public RoomManager getRoomManager() {
+        return roomManager;
     }
 
     // =========================
@@ -166,19 +188,47 @@ public class ChatServer {
 
         javax.swing.SwingUtilities.invokeLater(() -> {
 
+            // =========================
+            // CLIENT MANAGER
+            // =========================
+
             ClientManager clientManager =
                     new ClientManager();
+
+            // =========================
+            // ROOM MANAGER
+            // =========================
+
+            RoomManager roomManager =
+                    new RoomManager();
+
+            // =========================
+            // SERVER GUI
+            // =========================
 
             ServerGUI serverGUI =
                     new ServerGUI(
                             clientManager
                     );
 
+            clientManager.setServerGUI(
+                    serverGUI
+            );
+
+            // =========================
+            // CHAT SERVER
+            // =========================
+
             ChatServer chatServer =
                     new ChatServer(
                             clientManager,
-                            serverGUI
+                            serverGUI,
+                            roomManager
                     );
+
+            // =========================
+            // GẮN SERVER VÀO GUI
+            // =========================
 
             serverGUI.setChatServer(
                     chatServer
