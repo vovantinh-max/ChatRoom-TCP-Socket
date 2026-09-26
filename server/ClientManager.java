@@ -5,14 +5,14 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class ClientManager {
 
-    // Danh sách Client đang kết nối
+    // Danh sách Client đang online
     private final Set<ClientHandler> clients =
             ConcurrentHashMap.newKeySet();
 
-    // GUI Server
+    // GUI của Server
     private ServerGUI serverGUI;
 
-    // Gắn GUI vào ClientManager
+    // Gắn GUI
     public void setServerGUI(ServerGUI serverGUI) {
         this.serverGUI = serverGUI;
     }
@@ -22,7 +22,7 @@ public class ClientManager {
 
         clients.add(client);
 
-        System.out.println(
+        logMessage(
                 "Client da tham gia. So Client: "
                         + clients.size()
         );
@@ -35,7 +35,7 @@ public class ClientManager {
 
         clients.remove(client);
 
-        System.out.println(
+        logMessage(
                 "Client da roi. So Client: "
                         + clients.size()
         );
@@ -43,7 +43,7 @@ public class ClientManager {
         updateGUI();
     }
 
-    // Gửi tin nhắn đến tất cả Client
+    // Gửi message đến tất cả Client
     public void broadcast(String message) {
 
         for (ClientHandler client : clients) {
@@ -51,18 +51,18 @@ public class ClientManager {
         }
     }
 
-    // Gửi tin nhắn đến một Client
+    // Gửi message đến một Client theo username
     public boolean sendToClient(
             String username,
             String message) {
 
         for (ClientHandler client : clients) {
 
-            if (username.equalsIgnoreCase(
-                    client.getUsername())) {
+            if (client.getUsername() != null
+                    && client.getUsername()
+                            .equalsIgnoreCase(username)) {
 
                 client.sendMessage(message);
-
                 return true;
             }
         }
@@ -70,19 +70,19 @@ public class ClientManager {
         return false;
     }
 
-    // Số Client online
-    public int getClientCount() {
-        return clients.size();
-    }
-
-    // Kiểm tra username
+    // Kiểm tra username đã tồn tại chưa
     public boolean isUsernameTaken(
             String username) {
 
+        if (username == null) {
+            return false;
+        }
+
         for (ClientHandler client : clients) {
 
-            if (username.equalsIgnoreCase(
-                    client.getUsername())) {
+            if (client.getUsername() != null
+                    && client.getUsername()
+                            .equalsIgnoreCase(username)) {
 
                 return true;
             }
@@ -92,6 +92,7 @@ public class ClientManager {
     }
 
     // Lấy danh sách username
+    // Dùng để Server gửi USER_LIST|...
     public Set<String> getUsernames() {
 
         Set<String> usernames =
@@ -99,36 +100,39 @@ public class ClientManager {
 
         for (ClientHandler client : clients) {
 
-            if (client.getUsername() != null) {
+            String username =
+                    client.getUsername();
 
-                usernames.add(
-                        client.getUsername()
-                );
+            if (username != null
+                    && !username.isEmpty()) {
+
+                usernames.add(username);
             }
         }
 
         return usernames;
     }
 
-    // ==========================================
-    // LẤY DANH SÁCH CLIENT
-    // Dùng cho File Transfer
-    // ==========================================
-
+    // Lấy toàn bộ Client
+    // ClientHandler dùng cho Private Chat và File Transfer
     public Set<ClientHandler> getClients() {
         return clients;
     }
 
-    // Cập nhật GUI
+    // Số Client đang online
+    public int getClientCount() {
+        return clients.size();
+    }
+
+    // Cập nhật danh sách Client trên Server GUI
     private void updateGUI() {
 
         if (serverGUI != null) {
-
             serverGUI.refreshClientList();
         }
     }
 
-    // Ghi Log lên Server
+    // Ghi Log
     public void logMessage(String message) {
 
         System.out.println(message);

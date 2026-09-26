@@ -6,23 +6,27 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class RoomManager {
 
-    // Danh sách phòng và Client trong từng phòng
+    // Danh sách phòng
+    // Mỗi phòng chứa danh sách Client
     private final Map<String, Set<ClientHandler>> rooms =
             new ConcurrentHashMap<>();
 
     public RoomManager() {
 
-        // Tạo các phòng mặc định
+        // Các phòng mặc định
         createRoom("General");
         createRoom("Java");
         createRoom("Gaming");
     }
 
-    // ==========================================
-    // TẠO PHÒNG
-    // ==========================================
-
+    // Tạo phòng
     public void createRoom(String roomName) {
+
+        if (roomName == null || roomName.trim().isEmpty()) {
+            return;
+        }
+
+        roomName = roomName.trim();
 
         rooms.putIfAbsent(
                 roomName,
@@ -30,42 +34,43 @@ public class RoomManager {
         );
     }
 
-    // ==========================================
-    // KIỂM TRA PHÒNG
-    // ==========================================
-
+    // Kiểm tra phòng có tồn tại
     public boolean roomExists(String roomName) {
 
-        return rooms.containsKey(roomName);
+        if (roomName == null) {
+            return false;
+        }
+
+        return rooms.containsKey(roomName.trim());
     }
 
-    // ==========================================
-    // THÊM CLIENT VÀO PHÒNG
-    // ==========================================
-
+    // Cho Client vào phòng
     public boolean joinRoom(
             String roomName,
             ClientHandler client) {
 
-        if (!roomExists(roomName)) {
+        if (client == null || !roomExists(roomName)) {
             return false;
         }
 
-        // Nếu Client đang ở phòng khác
-        // thì xóa khỏi phòng cũ
+        roomName = roomName.trim();
+
+        // Xóa Client khỏi phòng cũ
         leaveCurrentRoom(client);
 
+        // Thêm Client vào phòng mới
         rooms.get(roomName).add(client);
 
         return true;
     }
 
-    // ==========================================
-    // RỜI PHÒNG HIỆN TẠI
-    // ==========================================
-
+    // Xóa Client khỏi phòng hiện tại
     public void leaveCurrentRoom(
             ClientHandler client) {
+
+        if (client == null) {
+            return;
+        }
 
         for (Set<ClientHandler> clients :
                 rooms.values()) {
@@ -74,13 +79,14 @@ public class RoomManager {
         }
     }
 
-    // ==========================================
-    // GỬI TIN NHẮN TRONG PHÒNG
-    // ==========================================
-
+    // Gửi tin nhắn trong phòng
     public void broadcastToRoom(
             String roomName,
             String message) {
+
+        if (roomName == null || message == null) {
+            return;
+        }
 
         Set<ClientHandler> clients =
                 rooms.get(roomName);
@@ -90,26 +96,22 @@ public class RoomManager {
         }
 
         for (ClientHandler client : clients) {
-
             client.sendMessage(message);
         }
     }
 
-    // ==========================================
-    // LẤY DANH SÁCH PHÒNG
-    // ==========================================
-
+    // Lấy danh sách phòng
     public Set<String> getRoomNames() {
-
         return rooms.keySet();
     }
 
-    // ==========================================
-    // ĐẾM CLIENT TRONG PHÒNG
-    // ==========================================
-
+    // Đếm số Client trong phòng
     public int getClientCount(
             String roomName) {
+
+        if (roomName == null) {
+            return 0;
+        }
 
         Set<ClientHandler> clients =
                 rooms.get(roomName);
@@ -121,18 +123,18 @@ public class RoomManager {
         return clients.size();
     }
 
-    // ==========================================
-    // TÌM PHÒNG CỦA CLIENT
-    // ==========================================
-
+    // Tìm phòng hiện tại của Client
     public String getClientRoom(
             ClientHandler client) {
+
+        if (client == null) {
+            return null;
+        }
 
         for (Map.Entry<String, Set<ClientHandler>> entry :
                 rooms.entrySet()) {
 
             if (entry.getValue().contains(client)) {
-
                 return entry.getKey();
             }
         }
@@ -140,10 +142,7 @@ public class RoomManager {
         return null;
     }
 
-    // ==========================================
-    // XÓA CLIENT KHỎI TẤT CẢ PHÒNG
-    // ==========================================
-
+    // Xóa Client khỏi tất cả phòng
     public void removeClient(
             ClientHandler client) {
 

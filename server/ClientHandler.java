@@ -1,11 +1,6 @@
 package server;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
@@ -23,20 +18,11 @@ public class ClientHandler implements Runnable {
     private PrintWriter writer;
 
     private String username;
-
-    // Client đã thực sự vào phòng chưa?
     private boolean registered = false;
-
-    // Phòng hiện tại
     private String currentRoom = "General";
 
-    // Định dạng ngày giờ
     private static final DateTimeFormatter TIME_FORMAT =
             DateTimeFormatter.ofPattern("HH:mm");
-
-    // ==========================================
-    // CONSTRUCTOR
-    // ==========================================
 
     public ClientHandler(
             Socket socket,
@@ -48,15 +34,10 @@ public class ClientHandler implements Runnable {
         this.roomManager = roomManager;
     }
 
-    // ==========================================
-    // RUN
-    // ==========================================
-
     @Override
     public void run() {
 
         try {
-
             reader = new BufferedReader(
                     new InputStreamReader(
                             socket.getInputStream(),
@@ -70,92 +51,60 @@ public class ClientHandler implements Runnable {
                     StandardCharsets.UTF_8
             );
 
-            // ==========================================
-            // YÊU CẦU USERNAME
-            // ==========================================
-
+            // LOGIN
             writer.println("USERNAME_REQUIRED");
 
-            username = reader.readLine();
+            String login = reader.readLine();
 
-            if (username == null ||
-                    username.trim().isEmpty()) {
-
+            if (login == null || login.trim().isEmpty()) {
                 return;
             }
 
-            username = username.trim();
+            login = login.trim();
 
-            // ==========================================
-            // KIỂM TRA USERNAME TRÙNG
-            // ==========================================
+            if (login.startsWith("LOGIN|")) {
+                username = login.substring(6).trim();
+            } else {
+                username = login;
+            }
 
-            if (clientManager.isUsernameTaken(
-                    username)) {
+            if (username.isEmpty()) {
+                writer.println("LOGIN_FAILED|Username khong hop le.");
+                return;
+            }
 
+            if (clientManager.isUsernameTaken(username)) {
                 writer.println("USERNAME_TAKEN");
-
+                writer.println("LOGIN_FAILED|Username da ton tai.");
                 return;
             }
-
-            // ==========================================
-            // ĐĂNG NHẬP THÀNH CÔNG
-            // ==========================================
 
             writer.println("LOGIN_SUCCESS");
 
-            // ==========================================
-            // THÊM CLIENT VÀO SERVER
-            // ==========================================
-
             clientManager.addClient(this);
-
             registered = true;
 
-            // ==========================================
-            // THAM GIA PHÒNG GENERAL
-            // ==========================================
-
-            roomManager.joinRoom(
-                    "General",
-                    this
-            );
-
+            roomManager.joinRoom("General", this);
             currentRoom = "General";
 
-            System.out.println(
-                    getTimestamp()
-                            + " "
-                            + username
-                            + " da ket noi."
-            );
-
-            // ==========================================
-            // THÔNG BÁO CLIENT THAM GIA
-            // ==========================================
-
-            String joinMessage =
-                    getTimestamp()
-                            + " [SERVER] "
-                            + username
-                            + " da tham gia phong chat.";
+            broadcastUserList();
 
             clientManager.logMessage(
-                    joinMessage
+                    getTimestamp() + " [LOGIN] "
+                            + username + " da ket noi."
             );
 
-            clientManager.broadcast(
-                    joinMessage
+            roomManager.broadcastToRoom(
+                    "General",
+                    getTimestamp() + " [SERVER] "
+                            + username
+                            + " da tham gia phong General."
             );
 
-            // ==========================================
-            // VÒNG LẶP NHẬN TIN NHẮN
-            // ==========================================
-
+            // NHẬN MESSAGE
             String message;
 
-            while ((message =
-                    reader.readLine()) != null) {
+            while ((message = reader.readLine()) != null) {
 
                 message = message.trim();
 
@@ -163,270 +112,397 @@ public class ClientHandler implements Runnable {
                     continue;
                 }
 
-                // ==========================================
-                // LỆNH QUIT
-                // ==========================================
-
-                if (message.equalsIgnoreCase(
-                        "/quit")) {
-
+                // LOGOUT
+                if (message.equalsIgnoreCase("/quit")
+                        || message.equalsIgnoreCase("LOGOUT")
+                        || message.equalsIgnoreCase(
+                                "LOGOUT|" + username)) {
                     break;
                 }
 
-                // ==========================================
-                // XEM DANH SÁCH PHÒNG
-                // ==========================================
+                // CHAT
+                if (message.startsWith("MESSAGE|")) {
+                    handleMessage(message);
+                    continue;
+                }
 
-                if (message.equalsIgnoreCase(
-                        "/rooms")) {
+                // PRIVATE
+                if (message.startsWith("PRIVATE|")) {
+                    handlePrivateMessageProtocol(message);
+                    continue;
+                }
 
+                // ROOM LIST
+                if (message.equalsIgnoreCase("ROOMS")
+                        || message.equalsIgnoreCase("/rooms")) {
                     handleRoomList();
-
                     continue;
                 }
 
-                // ==========================================
                 // JOIN ROOM
-                // ==========================================
-
-                if (message.toLowerCase()
-                        .startsWith("/join ")) {
-
-                    handleJoinRoom(message);
-
+                if (message.startsWith("JOIN|")) {
+                    joinRoom(message.substring(5).trim());
                     continue;
                 }
 
-                // ==========================================
+                if (message.toLowerCase().startsWith("/join ")) {
+                    joinRoom(message.substring(6).trim());
+                    continue;
+                }
+
                 // LEAVE ROOM
-                // ==========================================
-
-                if (message.equalsIgnoreCase(
-                        "/leave")) {
-
-                    handleLeaveRoom();
-
+                if (message.equalsIgnoreCase("LEAVE")
+                        || message.equalsIgnoreCase("/leave")) {
+                    leaveRoom();
                     continue;
                 }
 
-                // ==========================================
-                // PRIVATE CHAT
-                // ==========================================
-
+                // PRIVATE CŨ
                 if (message.startsWith("/pm ")) {
-
-                    handlePrivateMessage(message);
-
+                    handleOldPrivateMessage(message);
                     continue;
                 }
 
-                // ==========================================
-                // FILE TRANSFER
-                // ==========================================
-
+                // FILE
                 if (message.startsWith("/file ")) {
-
                     handleFileCommand(message);
-
                     continue;
                 }
 
-                // ==========================================
-                // CHAT THƯỜNG
-                // ==========================================
-
-                String fullMessage =
-                        getTimestamp()
-                                + " "
-                                + username
-                                + ": "
-                                + message;
-
-                // Ghi vào Server Log
-                clientManager.logMessage(
-                        fullMessage
-                );
-
-                // Chỉ gửi cho Client trong cùng phòng
-                roomManager.broadcastToRoom(
-                        currentRoom,
-                        fullMessage
-                );
+                // MESSAGE CŨ
+                handleOldMessage(message);
             }
 
         } catch (IOException e) {
 
-            System.out.println(
-                    "Client bi ngat ket noi: "
+            clientManager.logMessage(
+                    getTimestamp()
+                            + " [ERROR] Client "
+                            + username
+                            + ": "
                             + e.getMessage()
             );
 
         } finally {
-
             disconnect();
         }
     }
 
-    // ==========================================
-    // ROOM LIST
-    // ==========================================
+    // =========================
+    // CHAT
+    // =========================
+
+    private void handleMessage(String message) {
+
+        String[] parts = message.split("\\|", 3);
+
+        if (parts.length < 3) {
+            sendMessage("ERROR|Sai cu phap MESSAGE.");
+            return;
+        }
+
+        String content = parts[2].trim();
+
+        if (content.isEmpty()) {
+            return;
+        }
+
+        String time = getTimestamp();
+
+        roomManager.broadcastToRoom(
+                currentRoom,
+                "MESSAGE|"
+                        + username
+                        + "|"
+                        + time
+                        + " "
+                        + content
+        );
+
+        clientManager.logMessage(
+                time + " "
+                        + username
+                        + ": "
+                        + content
+        );
+    }
+
+    private void handleOldMessage(String message) {
+
+        String content = message.trim();
+
+        if (content.isEmpty()) {
+            return;
+        }
+
+        String time = getTimestamp();
+
+        roomManager.broadcastToRoom(
+                currentRoom,
+                "MESSAGE|"
+                        + username
+                        + "|"
+                        + time
+                        + " "
+                        + content
+        );
+
+        clientManager.logMessage(
+                time + " "
+                        + username
+                        + ": "
+                        + content
+        );
+    }
+
+    // =========================
+    // PRIVATE MESSAGE
+    // =========================
+
+    private void handlePrivateMessageProtocol(
+            String message) {
+
+        String[] parts = message.split("\\|", 4);
+
+        if (parts.length < 4) {
+            sendMessage("ERROR|Sai cu phap PRIVATE.");
+            return;
+        }
+
+        String targetUsername = parts[2].trim();
+        String content = parts[3].trim();
+
+        sendPrivateMessage(
+                targetUsername,
+                content
+        );
+    }
+
+    private void handleOldPrivateMessage(
+            String message) {
+
+        String content = message.substring(4).trim();
+        int index = content.indexOf(" ");
+
+        if (index == -1) {
+            sendMessage(
+                    "ERROR|Dung: /pm <username> <message>"
+            );
+            return;
+        }
+
+        String targetUsername =
+                content.substring(0, index).trim();
+
+        String privateMessage =
+                content.substring(index + 1).trim();
+
+        sendPrivateMessage(
+                targetUsername,
+                privateMessage
+        );
+    }
+
+    private void sendPrivateMessage(
+            String targetUsername,
+            String content) {
+
+        if (targetUsername.isEmpty()
+                || content.isEmpty()) {
+
+            sendMessage(
+                    "ERROR|Tin nhan private khong hop le."
+            );
+            return;
+        }
+
+        ClientHandler target =
+                findClient(targetUsername);
+
+        if (target == null) {
+            sendMessage(
+                    "ERROR|Khong tim thay Client: "
+                            + targetUsername
+            );
+            return;
+        }
+
+        String time = getTimestamp();
+
+        String packet =
+                "PRIVATE|"
+                        + username
+                        + "|"
+                        + targetUsername
+                        + "|"
+                        + time
+                        + " "
+                        + content;
+
+        target.sendMessage(packet);
+
+        if (target != this) {
+            sendMessage(packet);
+        }
+
+        clientManager.logMessage(
+                time
+                        + " [PRIVATE] "
+                        + username
+                        + " -> "
+                        + targetUsername
+                        + ": "
+                        + content
+        );
+    }
+
+    private ClientHandler findClient(
+            String name) {
+
+        for (ClientHandler client :
+                clientManager.getClients()) {
+
+            if (name.equalsIgnoreCase(
+                    client.getUsername())) {
+
+                return client;
+            }
+        }
+
+        return null;
+    }
+
+    // =========================
+    // USER LIST
+    // =========================
+
+    private void broadcastUserList() {
+
+        StringBuilder users =
+                new StringBuilder();
+
+        for (String name :
+                clientManager.getUsernames()) {
+
+            if (users.length() > 0) {
+                users.append(",");
+            }
+
+            users.append(name);
+        }
+
+        clientManager.broadcast(
+                "USER_LIST|" + users
+        );
+    }
+
+    // =========================
+    // ROOM
+    // =========================
 
     private void handleRoomList() {
 
         sendMessage(
-                "[SERVER] Danh sach phong:"
+                getTimestamp()
+                        + " [SERVER] Danh sach phong:"
         );
 
-        for (String roomName :
+        for (String room :
                 roomManager.getRoomNames()) {
 
-            int count =
-                    roomManager.getClientCount(
-                            roomName
-                    );
-
             sendMessage(
-                    " - "
-                            + roomName
+                    getTimestamp()
+                            + " [SERVER] "
+                            + room
                             + " ("
-                            + count
+                            + roomManager.getClientCount(room)
                             + " client)"
             );
         }
 
         sendMessage(
-                "[SERVER] Phong hien tai: "
+                getTimestamp()
+                        + " [SERVER] Phong hien tai: "
                         + currentRoom
         );
     }
 
-    // ==========================================
-    // JOIN ROOM
-    // ==========================================
-
-    private void handleJoinRoom(
-            String message) {
-
-        String roomName =
-                message.substring(6).trim();
+    private void joinRoom(String roomName) {
 
         if (roomName.isEmpty()) {
-
-            sendMessage(
-                    "[SERVER] Sai cu phap. "
-                            + "Dung: /join <room>"
-            );
-
+            sendMessage("ERROR|Ten phong khong hop le.");
             return;
         }
 
-        // Kiểm tra phòng tồn tại
-        if (!roomManager.roomExists(
-                roomName)) {
-
+        if (!roomManager.roomExists(roomName)) {
             sendMessage(
-                    "[SERVER] Phong '"
+                    "ERROR|Phong '"
                             + roomName
                             + "' khong ton tai."
             );
-
-            sendMessage(
-                    "[SERVER] Dung /rooms "
-                            + "de xem danh sach phong."
-            );
-
             return;
         }
 
-        // Nếu đang ở phòng đó
-        if (currentRoom.equals(roomName)) {
-
+        if (currentRoom.equalsIgnoreCase(roomName)) {
             sendMessage(
-                    "[SERVER] Ban dang o phong "
+                    "INFO|Ban dang o phong "
                             + roomName
             );
-
             return;
         }
 
-        String oldRoom =
-                currentRoom;
+        String oldRoom = currentRoom;
 
-        // Chuyển phòng
-        boolean joined =
-                roomManager.joinRoom(
-                        roomName,
-                        this
-                );
-
-        if (!joined) {
-
+        if (!roomManager.joinRoom(roomName, this)) {
             sendMessage(
-                    "[SERVER] Khong the tham gia phong."
+                    "ERROR|Khong the tham gia phong."
             );
-
             return;
         }
 
         currentRoom = roomName;
 
-        // ==========================================
-        // LOG SERVER
-        // ==========================================
+        String time = getTimestamp();
 
-        String logMessage =
-                getTimestamp()
+        clientManager.logMessage(
+                time
                         + " [ROOM] "
                         + username
                         + " chuyen tu "
                         + oldRoom
                         + " -> "
-                        + roomName;
-
-        clientManager.logMessage(
-                logMessage
+                        + roomName
         );
 
-        // ==========================================
-        // THÔNG BÁO CLIENT
-        // ==========================================
-
         sendMessage(
-                getTimestamp()
-                        + " [SERVER] "
-                        + "Ban da vao phong "
+                "INFO|"
+                        + time
+                        + " Ban da vao phong "
                         + roomName
         );
 
         roomManager.broadcastToRoom(
                 roomName,
-                getTimestamp()
+                time
                         + " [SERVER] "
                         + username
                         + " da tham gia phong."
         );
     }
 
-    // ==========================================
-    // LEAVE ROOM
-    // ==========================================
+    private void leaveRoom() {
 
-    private void handleLeaveRoom() {
-
-        // Không cho rời General
-        if (currentRoom.equals("General")) {
-
+        if (currentRoom.equalsIgnoreCase("General")) {
             sendMessage(
-                    "[SERVER] Ban dang o phong General."
+                    "INFO|"
+                            + getTimestamp()
+                            + " Ban dang o phong General."
             );
-
             return;
         }
 
-        String oldRoom =
-                currentRoom;
+        String oldRoom = currentRoom;
 
-        // Chuyển về General
         roomManager.joinRoom(
                 "General",
                 this
@@ -434,180 +510,56 @@ public class ClientHandler implements Runnable {
 
         currentRoom = "General";
 
-        // ==========================================
-        // LOG SERVER
-        // ==========================================
+        String time = getTimestamp();
 
-        String logMessage =
-                getTimestamp()
+        clientManager.logMessage(
+                time
                         + " [ROOM] "
                         + username
                         + " roi phong "
                         + oldRoom
-                        + " -> General";
-
-        clientManager.logMessage(
-                logMessage
+                        + " -> General"
         );
 
-        // ==========================================
-        // THÔNG BÁO
-        // ==========================================
-
         sendMessage(
-                getTimestamp()
-                        + " [SERVER] "
-                        + "Ban da tro ve phong General."
+                "INFO|"
+                        + time
+                        + " Ban da tro ve phong General."
         );
 
         roomManager.broadcastToRoom(
                 "General",
-                getTimestamp()
+                time
                         + " [SERVER] "
                         + username
                         + " da tham gia phong General."
         );
     }
 
-    // ==========================================
-    // PRIVATE CHAT
-    // ==========================================
-
-    private void handlePrivateMessage(
-            String message) {
-
-        /*
-         * Cú pháp:
-         *
-         * /pm username nội dung
-         *
-         * Ví dụ:
-         * /pm Nam Xin chao Nam
-         */
-
-        String content =
-                message.substring(4).trim();
-
-        int spaceIndex =
-                content.indexOf(" ");
-
-        if (spaceIndex == -1) {
-
-            sendMessage(
-                    "[SERVER] Sai cu phap. "
-                            + "Dung: /pm <username> <message>"
-            );
-
-            return;
-        }
-
-        String targetUsername =
-                content.substring(
-                        0,
-                        spaceIndex
-                ).trim();
-
-        String privateMessage =
-                content.substring(
-                        spaceIndex + 1
-                ).trim();
-
-        if (targetUsername.isEmpty() ||
-                privateMessage.isEmpty()) {
-
-            sendMessage(
-                    "[SERVER] Sai cu phap. "
-                            + "Dung: /pm <username> <message>"
-            );
-
-            return;
-        }
-
-        String formattedMessage =
-                getTimestamp()
-                        + " [PRIVATE] "
-                        + username
-                        + " -> "
-                        + targetUsername
-                        + ": "
-                        + privateMessage;
-
-        // Ghi vào Server Log
-        clientManager.logMessage(
-                formattedMessage
-        );
-
-        // Gửi đến Client đích
-        boolean sent =
-                clientManager.sendToClient(
-                        targetUsername,
-                        formattedMessage
-                );
-
-        if (sent) {
-
-            // Thông báo cho người gửi
-            sendMessage(
-                    getTimestamp()
-                            + " [PRIVATE] Ban -> "
-                            + targetUsername
-                            + ": "
-                            + privateMessage
-            );
-
-        } else {
-
-            sendMessage(
-                    getTimestamp()
-                            + " [SERVER] Khong tim thay Client: "
-                            + targetUsername
-            );
-        }
-    }
-
-    // ==========================================
+    // =========================
     // FILE TRANSFER
-    // ==========================================
+    // =========================
 
     private void handleFileCommand(
             String message) {
 
-        /*
-         * Cú pháp:
-         *
-         * /file username đường_dẫn_file
-         *
-         * Ví dụ:
-         *
-         * /file Nam C:\Users\Tinh\Desktop\test.pdf
-         */
-
         String content =
                 message.substring(6).trim();
 
-        int spaceIndex =
-                content.indexOf(" ");
+        int index = content.indexOf(" ");
 
-        if (spaceIndex == -1) {
-
+        if (index == -1) {
             sendMessage(
-                    "[SERVER] Sai cu phap. "
-                            + "Dung: /file <username> <duong_dan_file>"
+                    "ERROR|Dung: /file <username> <duong_dan_file>"
             );
-
             return;
         }
 
         String targetUsername =
-                content.substring(
-                        0,
-                        spaceIndex
-                ).trim();
+                content.substring(0, index).trim();
 
         String filePath =
-                content.substring(
-                        spaceIndex + 1
-                ).trim();
+                content.substring(index + 1).trim();
 
         sendFile(
                 targetUsername,
@@ -615,66 +567,35 @@ public class ClientHandler implements Runnable {
         );
     }
 
-    // ==========================================
-    // SEND FILE
-    // ==========================================
-
     private void sendFile(
             String targetUsername,
             String filePath) {
 
-        File file =
-                new File(filePath);
+        File file = new File(filePath);
 
-        // Kiểm tra file
-        if (!file.exists() ||
-                !file.isFile()) {
-
+        if (!file.exists() || !file.isFile()) {
             sendMessage(
-                    "[SERVER] File khong ton tai."
+                    "ERROR|File khong ton tai."
             );
-
             return;
         }
 
-        // Tìm Client nhận
-        ClientHandler target = null;
-
-        for (ClientHandler client :
-                clientManager.getClients()) {
-
-            if (targetUsername.equalsIgnoreCase(
-                    client.getUsername())) {
-
-                target = client;
-
-                break;
-            }
-        }
+        ClientHandler target =
+                findClient(targetUsername);
 
         if (target == null) {
-
             sendMessage(
-                    "[SERVER] Khong tim thay Client: "
+                    "ERROR|Khong tim thay Client: "
                             + targetUsername
             );
-
             return;
         }
 
-        try {
+        try (FileInputStream input =
+                     new FileInputStream(file)) {
 
-            FileInputStream input =
-                    new FileInputStream(file);
-
-            byte[] buffer =
-                    new byte[3072];
-
+            byte[] buffer = new byte[3072];
             int bytesRead;
-
-            // ==========================================
-            // BẮT ĐẦU FILE
-            // ==========================================
 
             target.sendMessage(
                     "FILE_START|"
@@ -682,10 +603,6 @@ public class ClientHandler implements Runnable {
                             + "|"
                             + file.length()
             );
-
-            // ==========================================
-            // ĐỌC VÀ GỬI FILE
-            // ==========================================
 
             while ((bytesRead =
                     input.read(buffer)) != -1) {
@@ -705,30 +622,16 @@ public class ClientHandler implements Runnable {
                 );
             }
 
-            // ==========================================
-            // KẾT THÚC FILE
-            // ==========================================
-
-            target.sendMessage(
-                    "FILE_END"
-            );
-
-            input.close();
-
-            // ==========================================
-            // THÔNG BÁO NGƯỜI GỬI
-            // ==========================================
+            target.sendMessage("FILE_END");
 
             sendMessage(
-                    "[SERVER] Da gui file "
+                    "INFO|"
+                            + getTimestamp()
+                            + " Da gui file "
                             + file.getName()
                             + " cho "
                             + targetUsername
             );
-
-            // ==========================================
-            // SERVER LOG
-            // ==========================================
 
             clientManager.logMessage(
                     getTimestamp()
@@ -743,15 +646,15 @@ public class ClientHandler implements Runnable {
         } catch (IOException e) {
 
             sendMessage(
-                    "[SERVER] Loi gui file: "
+                    "ERROR|Loi gui file: "
                             + e.getMessage()
             );
         }
     }
 
-    // ==========================================
-    // TIMESTAMP
-    // ==========================================
+    // =========================
+    // UTILITY
+    // =========================
 
     private String getTimestamp() {
 
@@ -761,45 +664,29 @@ public class ClientHandler implements Runnable {
                 + "]";
     }
 
-    // ==========================================
-    // SEND MESSAGE
-    // ==========================================
-
     public void sendMessage(String message) {
 
         if (writer != null) {
-
             writer.println(message);
         }
     }
 
-    // ==========================================
-    // GET USERNAME
-    // ==========================================
-
     public String getUsername() {
-
         return username;
     }
 
-    // ==========================================
-    // GET CURRENT ROOM
-    // ==========================================
-
     public String getCurrentRoom() {
-
         return currentRoom;
     }
 
-    // ==========================================
+    // =========================
     // DISCONNECT
-    // ==========================================
+    // =========================
 
     private void disconnect() {
 
         if (registered) {
 
-            // Thông báo trước khi xóa Client
             String leaveMessage =
                     getTimestamp()
                             + " [SERVER] "
@@ -810,24 +697,17 @@ public class ClientHandler implements Runnable {
                     leaveMessage
             );
 
-            // Thông báo cho Client
-            // trong cùng phòng
             roomManager.broadcastToRoom(
                     currentRoom,
                     leaveMessage
             );
 
-            // Xóa khỏi Room
-            roomManager.removeClient(
-                    this
-            );
-
-            // Xóa khỏi ClientManager
-            clientManager.removeClient(
-                    this
-            );
+            roomManager.removeClient(this);
+            clientManager.removeClient(this);
 
             registered = false;
+
+            broadcastUserList();
         }
 
         try {
