@@ -43,6 +43,15 @@ public class ClientManager {
         updateGUI();
     }
 
+    // Ngắt kết nối tất cả Client (khi Server Stop)
+    public void disconnectAllClients() {
+        for (ClientHandler client : clients) {
+            client.closeConnection();
+        }
+        clients.clear();
+        updateGUI();
+    }
+
     // Gửi message đến tất cả Client
     public void broadcast(String message) {
 

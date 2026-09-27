@@ -52,8 +52,6 @@ public class ClientHandler implements Runnable {
             );
 
             // LOGIN
-            writer.println("USERNAME_REQUIRED");
-
             String login = reader.readLine();
 
             if (login == null || login.trim().isEmpty()) {
@@ -207,6 +205,22 @@ public class ClientHandler implements Runnable {
             return;
         }
 
+        // Hỗ trợ các lệnh phòng chat nếu người dùng gõ từ ô chat Client
+        if (content.equalsIgnoreCase("/rooms") || content.equalsIgnoreCase("ROOMS")) {
+            handleRoomList();
+            return;
+        }
+
+        if (content.toLowerCase().startsWith("/join ")) {
+            joinRoom(content.substring(6).trim());
+            return;
+        }
+
+        if (content.equalsIgnoreCase("/leave")) {
+            leaveRoom();
+            return;
+        }
+
         String time = getTimestamp();
 
         roomManager.broadcastToRoom(
@@ -214,8 +228,6 @@ public class ClientHandler implements Runnable {
                 "MESSAGE|"
                         + username
                         + "|"
-                        + time
-                        + " "
                         + content
         );
 
@@ -335,15 +347,9 @@ public class ClientHandler implements Runnable {
                         + "|"
                         + targetUsername
                         + "|"
-                        + time
-                        + " "
                         + content;
 
         target.sendMessage(packet);
-
-        if (target != this) {
-            sendMessage(packet);
-        }
 
         clientManager.logMessage(
                 time
@@ -677,6 +683,17 @@ public class ClientHandler implements Runnable {
 
     public String getCurrentRoom() {
         return currentRoom;
+    }
+
+    public void closeConnection() {
+        try {
+            sendMessage("SYSTEM|Máy chủ đã dừng kết nối.");
+            if (socket != null && !socket.isClosed()) {
+                socket.close();
+            }
+        } catch (IOException e) {
+            // ignore
+        }
     }
 
     // =========================

@@ -2,6 +2,8 @@ package server;
 
 import javax.swing.*;
 import java.awt.*;
+import java.net.*;
+import java.util.Enumeration;
 
 public class ServerGUI extends JFrame {
 
@@ -10,6 +12,7 @@ public class ServerGUI extends JFrame {
 
     private JLabel statusLabel;
     private JLabel clientCountLabel;
+    private String serverIp;
 
     private JTextArea logArea;
     private DefaultListModel<String> clientListModel;
@@ -66,10 +69,27 @@ public class ServerGUI extends JFrame {
                         )
                 );
 
+        serverIp = getServerIpAddress();
+
         statusLabel =
                 new JLabel(
                         "● Server đang dừng"
                 );
+
+        JLabel ipLabel =
+                new JLabel(
+                        "   IP: " + serverIp
+                );
+        ipLabel.setFont(
+                new Font(
+                        "Arial",
+                        Font.BOLD,
+                        12
+                )
+        );
+        ipLabel.setForeground(
+                new Color(0, 102, 204)
+        );
 
         clientCountLabel =
                 new JLabel(
@@ -77,11 +97,10 @@ public class ServerGUI extends JFrame {
                 );
 
         infoPanel.add(statusLabel);
-
+        infoPanel.add(ipLabel);
         infoPanel.add(
-                new JLabel("   Port: 5000")
+                new JLabel(" | Port: 5000 | ")
         );
-
         infoPanel.add(clientCountLabel);
 
         // =========================
@@ -239,7 +258,12 @@ public class ServerGUI extends JFrame {
             stopButton.setEnabled(true);
 
             appendLog(
-                    "Server đã bắt đầu chạy trên port 5000."
+                    "Server đã bắt đầu chạy tại IP: "
+                            + serverIp
+                            + " trên port 5000."
+            );
+            appendLog(
+                    "Gợi ý: Nhập IP trên vào ô 'IP Server' của Client để kết nối qua Wi-Fi/LAN."
             );
         }
     }
@@ -311,5 +335,40 @@ public class ServerGUI extends JFrame {
                             .getClientCount()
             );
         });
+    }
+
+    // =========================
+    // LẤY IP LAN CỦA SERVER
+    // =========================
+
+    private String getServerIpAddress() {
+        try {
+            Enumeration<NetworkInterface> interfaces =
+                    NetworkInterface.getNetworkInterfaces();
+
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface iface = interfaces.nextElement();
+
+                if (iface.isLoopback() || !iface.isUp() || iface.isVirtual()) {
+                    continue;
+                }
+
+                Enumeration<InetAddress> addresses =
+                        iface.getInetAddresses();
+
+                while (addresses.hasMoreElements()) {
+                    InetAddress addr = addresses.nextElement();
+
+                    if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+
+            return InetAddress.getLocalHost().getHostAddress();
+
+        } catch (Exception e) {
+            return "127.0.0.1";
+        }
     }
 }
