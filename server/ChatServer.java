@@ -144,6 +144,10 @@ public class ChatServer {
 
         running = false;
 
+        if (clientManager != null) {
+            clientManager.disconnectAllClients();
+        }
+
         try {
 
             if (serverSocket != null &&
