@@ -66,6 +66,7 @@ public class ClientHandler implements Runnable {
             currentRoom = "General";
 
             broadcastUserList();
+            broadcastRoomList();
             clientManager.logMessage(getTimestamp() + " [LOGIN] " + username + " da ket noi.");
             roomManager.broadcastToRoom("General", getTimestamp() + " [SERVER] " + username + " da tham gia phong General.");
 
@@ -88,6 +89,16 @@ public class ClientHandler implements Runnable {
 
                 if (message.startsWith("PRIVATE|")) {
                     handlePrivateMessageProtocol(message);
+                    continue;
+                }
+
+                if (message.startsWith("CREATE_ROOM|")) {
+                    createAndJoinRoom(message.substring(12).trim());
+                    continue;
+                }
+
+                if (message.startsWith("CREATE|")) {
+                    createAndJoinRoom(message.substring(7).trim());
                     continue;
                 }
 
@@ -145,6 +156,11 @@ public class ClientHandler implements Runnable {
 
         if (content.equalsIgnoreCase("/rooms") || content.equalsIgnoreCase("ROOMS")) {
             handleRoomList();
+            return;
+        }
+
+        if (content.toLowerCase().startsWith("/create ")) {
+            createAndJoinRoom(content.substring(8).trim());
             return;
         }
 
@@ -244,6 +260,24 @@ public class ClientHandler implements Runnable {
             sendMessage(getTimestamp() + " [SERVER] " + room + " (" + roomManager.getClientCount(room) + " client)");
         }
         sendMessage(getTimestamp() + " [SERVER] Phong hien tai: " + currentRoom);
+        String list = String.join(",", roomManager.getRoomNames());
+        sendMessage("ROOM_LIST|" + list);
+    }
+
+    private void createAndJoinRoom(String roomName) {
+        if (roomName == null || roomName.trim().isEmpty()) {
+            sendMessage("ERROR|Ten nhom khong hop le.");
+            return;
+        }
+        roomName = roomName.trim();
+        roomManager.createRoom(roomName);
+        broadcastRoomList();
+        joinRoom(roomName);
+    }
+
+    private void broadcastRoomList() {
+        String list = String.join(",", roomManager.getRoomNames());
+        clientManager.broadcast("ROOM_LIST|" + list);
     }
 
     private void joinRoom(String roomName) {
