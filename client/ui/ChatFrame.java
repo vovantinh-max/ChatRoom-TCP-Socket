@@ -24,6 +24,17 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     private JList<String> userList;
     private JLabel lblOnlineBadge;
 
+    private DefaultListModel<String> groupListModel;
+    private JList<String> groupList;
+    private JLabel lblGroupCountBadge;
+    private String currentRoomName = "General";
+
+    private CardLayout sidebarCardLayout;
+    private JPanel sidebarCardPanel;
+    private JButton btnTabMembers;
+    private JButton btnTabGroups;
+
+    private JLabel lblServerInfo;
     private JComboBox<String> cbRecipient;
     private JPanel recipientStatusPanel;
     private JLabel lblCurrentRecipient;
@@ -43,8 +54,8 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     private void initUI() {
         setTitle("Phòng Chat TCP - [" + client.getUsername() + "]");
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setSize(960, 660);
-        setMinimumSize(new Dimension(750, 500));
+        setSize(980, 660);
+        setMinimumSize(new Dimension(800, 520));
         setLocationRelativeTo(null);
 
         addWindowListener(new WindowAdapter() {
@@ -79,7 +90,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         lblName.setForeground(UIUtils.COLOR_TEXT_MAIN);
         userTextCol.add(lblName);
 
-        JLabel lblServerInfo = new JLabel("● Đang trực tuyến  |  Server: " + client.getServerHost() + ":" + client.getServerPort());
+        lblServerInfo = new JLabel("● Đang trực tuyến  |  Nhóm: " + currentRoomName + "  |  Server: " + client.getServerHost() + ":" + client.getServerPort());
         lblServerInfo.setFont(UIUtils.FONT_TINY);
         lblServerInfo.setForeground(UIUtils.COLOR_ONLINE);
         userTextCol.add(lblServerInfo);
@@ -110,7 +121,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         rootPanel.add(headerPanel, BorderLayout.NORTH);
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-        splitPane.setResizeWeight(0.76);
+        splitPane.setResizeWeight(0.74);
         splitPane.setContinuousLayout(true);
         splitPane.setBorder(null);
         splitPane.setDividerSize(1);
@@ -131,21 +142,43 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         sidebarPanel.setBackground(UIUtils.COLOR_SURFACE);
         sidebarPanel.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, UIUtils.COLOR_BORDER));
 
-        JPanel sidebarHeader = new JPanel(new BorderLayout());
+        JPanel sidebarHeader = new JPanel(new GridLayout(1, 2, 8, 0));
         sidebarHeader.setOpaque(false);
-        sidebarHeader.setBorder(new EmptyBorder(14, 16, 12, 16));
+        sidebarHeader.setBorder(new EmptyBorder(12, 14, 12, 14));
 
-        JLabel lblSidebarTitle = new JLabel("Thành viên");
-        lblSidebarTitle.setFont(UIUtils.FONT_HEADER);
-        lblSidebarTitle.setForeground(UIUtils.COLOR_TEXT_MAIN);
-        sidebarHeader.add(lblSidebarTitle, BorderLayout.WEST);
+        btnTabMembers = new JButton("Thành viên");
+        btnTabMembers.setFont(UIUtils.FONT_BOLD);
+        btnTabMembers.setFocusPainted(false);
+        btnTabMembers.setCursor(new Cursor(Cursor.HAND_CURSOR));
 
-        lblOnlineBadge = new JLabel("1 online", SwingConstants.CENTER);
+        btnTabGroups = new JButton("Nhóm chat");
+        btnTabGroups.setFont(UIUtils.FONT_BOLD);
+        btnTabGroups.setFocusPainted(false);
+        btnTabGroups.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+        styleTabButton(btnTabMembers, true);
+        styleTabButton(btnTabGroups, false);
+
+        sidebarHeader.add(btnTabMembers);
+        sidebarHeader.add(btnTabGroups);
+        sidebarPanel.add(sidebarHeader, BorderLayout.NORTH);
+
+        sidebarCardLayout = new CardLayout();
+        sidebarCardPanel = new JPanel(sidebarCardLayout);
+        sidebarCardPanel.setOpaque(false);
+
+        JPanel membersPanel = new JPanel(new BorderLayout());
+        membersPanel.setOpaque(false);
+
+        JPanel membersSubHeader = new JPanel(new BorderLayout());
+        membersSubHeader.setOpaque(false);
+        membersSubHeader.setBorder(new EmptyBorder(0, 16, 8, 16));
+
+        lblOnlineBadge = new JLabel("1 trực tuyến");
         lblOnlineBadge.setFont(UIUtils.FONT_TINY);
         lblOnlineBadge.setForeground(UIUtils.COLOR_ONLINE);
-        sidebarHeader.add(lblOnlineBadge, BorderLayout.EAST);
-
-        sidebarPanel.add(sidebarHeader, BorderLayout.NORTH);
+        membersSubHeader.add(lblOnlineBadge, BorderLayout.WEST);
+        membersPanel.add(membersSubHeader, BorderLayout.NORTH);
 
         userListModel = new DefaultListModel<>();
         userListModel.addElement(client.getUsername());
@@ -168,16 +201,100 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         JScrollPane userScroll = new JScrollPane(userList);
         userScroll.setBorder(null);
         userScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        sidebarPanel.add(userScroll, BorderLayout.CENTER);
+        membersPanel.add(userScroll, BorderLayout.CENTER);
 
-        JPanel sidebarFooter = new JPanel(new BorderLayout());
-        sidebarFooter.setOpaque(false);
-        sidebarFooter.setBorder(new EmptyBorder(10, 14, 12, 14));
+        JPanel membersFooter = new JPanel(new BorderLayout());
+        membersFooter.setOpaque(false);
+        membersFooter.setBorder(new EmptyBorder(10, 14, 12, 14));
         JLabel lblHint = new JLabel("<html><small style='color:#64748B;'>* <i>Nhấp đúp vào tên<br>để chuyển sang chat riêng</i></small></html>");
-        sidebarFooter.add(lblHint, BorderLayout.CENTER);
-        sidebarPanel.add(sidebarFooter, BorderLayout.SOUTH);
+        membersFooter.add(lblHint, BorderLayout.CENTER);
+        membersPanel.add(membersFooter, BorderLayout.SOUTH);
 
-        sidebarPanel.setPreferredSize(new Dimension(230, 0));
+        JPanel groupsPanel = new JPanel(new BorderLayout());
+        groupsPanel.setOpaque(false);
+
+        JPanel groupsTop = new JPanel();
+        groupsTop.setLayout(new BoxLayout(groupsTop, BoxLayout.Y_AXIS));
+        groupsTop.setOpaque(false);
+        groupsTop.setBorder(new EmptyBorder(0, 14, 8, 14));
+
+        JButton btnCreateGroup = new JButton("+ Tạo nhóm chat");
+        btnCreateGroup.setFont(UIUtils.FONT_BOLD);
+        btnCreateGroup.setForeground(UIUtils.COLOR_PRIMARY);
+        btnCreateGroup.setBackground(UIUtils.COLOR_PRIMARY_LIGHT);
+        btnCreateGroup.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(191, 219, 254), 1),
+            new EmptyBorder(8, 12, 8, 12)
+        ));
+        btnCreateGroup.setFocusPainted(false);
+        btnCreateGroup.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        btnCreateGroup.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+        btnCreateGroup.setAlignmentX(Component.CENTER_ALIGNMENT);
+        btnCreateGroup.addActionListener(e -> performCreateGroup());
+        groupsTop.add(btnCreateGroup);
+
+        groupsTop.add(Box.createVerticalStrut(10));
+
+        JPanel groupsSubHeader = new JPanel(new BorderLayout());
+        groupsSubHeader.setOpaque(false);
+        lblGroupCountBadge = new JLabel("Các nhóm trò chuyện (3)");
+        lblGroupCountBadge.setFont(UIUtils.FONT_TINY);
+        lblGroupCountBadge.setForeground(UIUtils.COLOR_TEXT_MUTED);
+        groupsSubHeader.add(lblGroupCountBadge, BorderLayout.WEST);
+        groupsTop.add(groupsSubHeader);
+
+        groupsPanel.add(groupsTop, BorderLayout.NORTH);
+
+        groupListModel = new DefaultListModel<>();
+        groupListModel.addElement("General");
+        groupListModel.addElement("Java");
+        groupListModel.addElement("Gaming");
+
+        groupList = new JList<>(groupListModel);
+        groupList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        groupList.setCellRenderer(new GroupCellRenderer());
+        groupList.setBackground(UIUtils.COLOR_SURFACE);
+        groupList.setBorder(new EmptyBorder(4, 8, 4, 8));
+
+        groupList.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 || e.getClickCount() == 1) {
+                    performJoinSelectedGroup();
+                }
+            }
+        });
+
+        JScrollPane groupScroll = new JScrollPane(groupList);
+        groupScroll.setBorder(null);
+        groupScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        groupsPanel.add(groupScroll, BorderLayout.CENTER);
+
+        JPanel groupsFooter = new JPanel(new BorderLayout());
+        groupsFooter.setOpaque(false);
+        groupsFooter.setBorder(new EmptyBorder(10, 14, 12, 14));
+        JLabel lblGroupHint = new JLabel("<html><small style='color:#64748B;'>* <i>Nhấp vào nhóm<br>để tham gia trò chuyện</i></small></html>");
+        groupsFooter.add(lblGroupHint, BorderLayout.CENTER);
+        groupsPanel.add(groupsFooter, BorderLayout.SOUTH);
+
+        sidebarCardPanel.add(membersPanel, "MEMBERS");
+        sidebarCardPanel.add(groupsPanel, "GROUPS");
+        sidebarPanel.add(sidebarCardPanel, BorderLayout.CENTER);
+
+        btnTabMembers.addActionListener(e -> {
+            styleTabButton(btnTabMembers, true);
+            styleTabButton(btnTabGroups, false);
+            sidebarCardLayout.show(sidebarCardPanel, "MEMBERS");
+        });
+
+        btnTabGroups.addActionListener(e -> {
+            styleTabButton(btnTabGroups, true);
+            styleTabButton(btnTabMembers, false);
+            sidebarCardLayout.show(sidebarCardPanel, "GROUPS");
+            client.requestRoomList();
+        });
+
+        sidebarPanel.setPreferredSize(new Dimension(265, 0));
         splitPane.setRightComponent(sidebarPanel);
 
         rootPanel.add(splitPane, BorderLayout.CENTER);
@@ -194,7 +311,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         recipientStatusPanel.setOpaque(false);
         recipientStatusPanel.setBorder(new EmptyBorder(0, 0, 8, 0));
 
-        lblCurrentRecipient = new JLabel("[Chung] Gửi tới: Tất cả phòng chat");
+        lblCurrentRecipient = new JLabel("[Chung] Gửi tới nhóm: " + currentRoomName);
         lblCurrentRecipient.setFont(UIUtils.FONT_BOLD);
         lblCurrentRecipient.setForeground(UIUtils.COLOR_PRIMARY);
         recipientStatusPanel.add(lblCurrentRecipient);
@@ -268,10 +385,68 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         txtInput.requestFocusInWindow();
     }
 
+    private void styleTabButton(JButton btn, boolean active) {
+        if (active) {
+            btn.setBackground(UIUtils.COLOR_PRIMARY);
+            btn.setForeground(Color.WHITE);
+            btn.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
+        } else {
+            btn.setBackground(new Color(241, 245, 249));
+            btn.setForeground(UIUtils.COLOR_TEXT_MUTED);
+            btn.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
+        }
+    }
+
+    private void performCreateGroup() {
+        String name = JOptionPane.showInputDialog(
+            this,
+            "Nhập tên nhóm chat mới:",
+            "Tạo nhóm chat",
+            JOptionPane.PLAIN_MESSAGE
+        );
+        if (name == null) return;
+        name = name.trim();
+        if (name.isEmpty()) return;
+
+        if (name.contains("|") || name.contains(",")) {
+            JOptionPane.showMessageDialog(this, "Tên nhóm không được chứa ký tự '|' hoặc ','", "Lỗi", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        client.sendCreateRoom(name);
+        currentRoomName = name;
+        updateRoomHeader();
+        if (!groupListModel.contains(name)) {
+            groupListModel.addElement(name);
+        }
+        groupList.setSelectedValue(name, true);
+        addSystemMessage("Bạn đã tạo và vào nhóm: " + name);
+    }
+
+    private void performJoinSelectedGroup() {
+        String selected = groupList.getSelectedValue();
+        if (selected == null || selected.equalsIgnoreCase(currentRoomName)) return;
+
+        client.sendJoinRoom(selected);
+        currentRoomName = selected;
+        updateRoomHeader();
+        groupList.repaint();
+        addSystemMessage("Bạn đã chuyển sang nhóm chat: " + selected);
+    }
+
+    private void updateRoomHeader() {
+        if (lblServerInfo != null) {
+            lblServerInfo.setText("● Đang trực tuyến  |  Nhóm: " + currentRoomName + "  |  Server: " + client.getServerHost() + ":" + client.getServerPort());
+        }
+        if (cbRecipient.getSelectedItem() == null || cbRecipient.getSelectedItem().equals(ALL_USERS)) {
+            lblCurrentRecipient.setText("[Chung] Gửi tới nhóm: " + currentRoomName);
+        }
+    }
+
     private void updateRecipientBadge() {
         String selected = (String) cbRecipient.getSelectedItem();
         if (selected == null || selected.equals(ALL_USERS)) {
-            lblCurrentRecipient.setText("[Chung] Gửi tới: Tất cả phòng chat");
+            lblCurrentRecipient.setText("[Chung] Gửi tới nhóm: " + currentRoomName);
             lblCurrentRecipient.setForeground(UIUtils.COLOR_PRIMARY);
             btnCancelPrivate.setVisible(false);
         } else {
@@ -516,7 +691,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
                 }
             }
 
-            lblOnlineBadge.setText(users.size() + " online");
+            lblOnlineBadge.setText(users.size() + " trực tuyến");
 
             if (currentSelected != null && !currentSelected.equals(ALL_USERS)) {
                 for (int i = 0; i < cbRecipient.getItemCount(); i++) {
@@ -527,6 +702,22 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
                 }
             }
             updateRecipientBadge();
+        });
+    }
+
+    @Override
+    public void onRoomListUpdated(List<String> rooms) {
+        SwingUtilities.invokeLater(() -> {
+            groupListModel.clear();
+            for (String r : rooms) {
+                groupListModel.addElement(r);
+            }
+            if (lblGroupCountBadge != null) {
+                lblGroupCountBadge.setText("Các nhóm trò chuyện (" + rooms.size() + ")");
+            }
+            if (groupList != null) {
+                groupList.repaint();
+            }
         });
     }
 
@@ -590,6 +781,66 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             lblDot.setFont(new Font("Segoe UI", Font.PLAIN, 10));
             lblDot.setForeground(UIUtils.COLOR_ONLINE);
             itemPanel.add(lblDot, BorderLayout.EAST);
+
+            return itemPanel;
+        }
+    }
+
+    private class GroupCellRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            String roomName = (String) value;
+            boolean isCurrent = roomName.equalsIgnoreCase(currentRoomName);
+
+            JPanel itemPanel = new JPanel(new BorderLayout(8, 0));
+            itemPanel.setBorder(new EmptyBorder(6, 8, 6, 8));
+            itemPanel.setOpaque(true);
+
+            if (isSelected) {
+                itemPanel.setBackground(UIUtils.COLOR_PRIMARY_LIGHT);
+            } else if (isCurrent) {
+                itemPanel.setBackground(new Color(240, 253, 244));
+            } else {
+                itemPanel.setBackground(UIUtils.COLOR_SURFACE);
+            }
+
+            JPanel iconPanel = new JPanel() {
+                @Override
+                protected void paintComponent(Graphics g) {
+                    super.paintComponent(g);
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(isCurrent ? UIUtils.COLOR_ONLINE : new Color(139, 92, 246));
+                    g2.fillOval(0, 0, 28, 28);
+                    g2.setColor(Color.WHITE);
+                    g2.setFont(new Font("Segoe UI", Font.BOLD, 13));
+                    FontMetrics fm = g2.getFontMetrics();
+                    int x = (28 - fm.stringWidth("#")) / 2;
+                    int y = (28 - fm.getHeight()) / 2 + fm.getAscent();
+                    g2.drawString("#", x, y);
+                    g2.dispose();
+                }
+            };
+            iconPanel.setOpaque(false);
+            iconPanel.setPreferredSize(new Dimension(28, 28));
+            itemPanel.add(iconPanel, BorderLayout.WEST);
+
+            JPanel namePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            namePanel.setOpaque(false);
+
+            JLabel lblName = new JLabel(roomName);
+            lblName.setFont(UIUtils.FONT_REGULAR);
+            lblName.setForeground(UIUtils.COLOR_TEXT_MAIN);
+            namePanel.add(lblName);
+
+            if (isCurrent) {
+                JLabel lblCurrent = new JLabel("(Đang tham gia)");
+                lblCurrent.setFont(UIUtils.FONT_TINY);
+                lblCurrent.setForeground(UIUtils.COLOR_ONLINE);
+                namePanel.add(lblCurrent);
+            }
+
+            itemPanel.add(namePanel, BorderLayout.CENTER);
 
             return itemPanel;
         }

@@ -26,3 +26,9 @@ replay_pid*
 # Local demo files
 demo_*.png
 client/DemoRunner.java
+ngrok.exe
+.ngrok*
+start_tunnel.bat
+
+
+
