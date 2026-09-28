@@ -88,6 +88,7 @@ public class ClientHandler implements Runnable {
             currentRoom = "General";
 
             broadcastUserList();
+            broadcastRoomList();
 
             clientManager.logMessage(
                     getTimestamp() + " [LOGIN] "
@@ -132,7 +133,16 @@ public class ClientHandler implements Runnable {
                     continue;
                 }
 
-                // ROOM LIST
+                if (message.startsWith("CREATE_ROOM|")) {
+                    createAndJoinRoom(message.substring(12).trim());
+                    continue;
+                }
+
+                if (message.startsWith("CREATE|")) {
+                    createAndJoinRoom(message.substring(7).trim());
+                    continue;
+                }
+
                 if (message.equalsIgnoreCase("ROOMS")
                         || message.equalsIgnoreCase("/rooms")) {
                     handleRoomList();
@@ -425,6 +435,25 @@ public class ClientHandler implements Runnable {
                         + " [SERVER] Phong hien tai: "
                         + currentRoom
         );
+
+        String list = String.join(",", roomManager.getRoomNames());
+        sendMessage("ROOM_LIST|" + list);
+    }
+
+    private void createAndJoinRoom(String roomName) {
+        if (roomName == null || roomName.trim().isEmpty()) {
+            sendMessage("ERROR|Ten nhom khong hop le.");
+            return;
+        }
+        roomName = roomName.trim();
+        roomManager.createRoom(roomName);
+        broadcastRoomList();
+        joinRoom(roomName);
+    }
+
+    private void broadcastRoomList() {
+        String list = String.join(",", roomManager.getRoomNames());
+        clientManager.broadcast("ROOM_LIST|" + list);
     }
 
     private void joinRoom(String roomName) {

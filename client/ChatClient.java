@@ -16,6 +16,7 @@ public class ChatClient {
         void onMessageReceived(String sender, String message);
         void onPrivateMessageReceived(String sender, String receiver, String message);
         void onUserListUpdated(List<String> users);
+        void onRoomListUpdated(List<String> rooms);
         void onSystemMessage(String message);
         void onDisconnected(String reason);
     }
@@ -76,6 +77,21 @@ public class ChatClient {
         sendRawMessage("PRIVATE|" + username + "|" + recipient + "|" + message);
     }
 
+    public void sendCreateRoom(String roomName) {
+        if (!connected || writer == null) return;
+        sendRawMessage("CREATE_ROOM|" + roomName);
+    }
+
+    public void sendJoinRoom(String roomName) {
+        if (!connected || writer == null) return;
+        sendRawMessage("JOIN|" + roomName);
+    }
+
+    public void requestRoomList() {
+        if (!connected || writer == null) return;
+        sendRawMessage("ROOMS");
+    }
+
     public void logout() {
         if (connected) {
             sendRawMessage("LOGOUT|" + username);
@@ -120,6 +136,12 @@ public class ChatClient {
     void notifyUserList(List<String> users) {
         if (eventListener != null) {
             eventListener.onUserListUpdated(users);
+        }
+    }
+
+    void notifyRoomList(List<String> rooms) {
+        if (eventListener != null) {
+            eventListener.onRoomListUpdated(rooms);
         }
     }
 

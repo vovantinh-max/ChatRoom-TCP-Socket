@@ -56,6 +56,22 @@ public class ServerListener implements Runnable {
                 }
                 break;
 
+            case "ROOM_LIST":
+                if (parts.length >= 2) {
+                    String roomString = parts[1];
+                    List<String> rooms = new ArrayList<>();
+                    if (!roomString.isEmpty()) {
+                        for (String r : roomString.split(",")) {
+                            String trimmed = r.trim();
+                            if (!trimmed.isEmpty()) {
+                                rooms.add(trimmed);
+                            }
+                        }
+                    }
+                    client.notifyRoomList(rooms);
+                }
+                break;
+
             case "MESSAGE":
                 if (parts.length >= 3) {
                     String sender = parts[1];
