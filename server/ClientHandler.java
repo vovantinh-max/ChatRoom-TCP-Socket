@@ -21,8 +21,10 @@ public class ClientHandler implements Runnable {
     private String username;
     private boolean registered = false;
     private String currentRoom = "General";
+    private final LocalDateTime connectedTime = LocalDateTime.now();
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
+    private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy");
 
     public ClientHandler(Socket socket, ClientManager clientManager, RoomManager roomManager, ChatServer chatServer) {
         this.socket = socket;
@@ -400,6 +402,25 @@ public class ClientHandler implements Runnable {
 
     public String getCurrentRoom() {
         return currentRoom;
+    }
+
+    public String getClientIp() {
+        if (socket != null && socket.getInetAddress() != null) {
+            String ip = socket.getInetAddress().getHostAddress();
+            if ("0:0:0:0:0:0:0:1".equals(ip)) {
+                return "127.0.0.1";
+            }
+            return ip;
+        }
+        return "N/A";
+    }
+
+    public int getClientPort() {
+        return (socket != null) ? socket.getPort() : 0;
+    }
+
+    public String getConnectedTime() {
+        return connectedTime.format(DATE_TIME_FORMAT);
     }
 
     public void closeConnection() {

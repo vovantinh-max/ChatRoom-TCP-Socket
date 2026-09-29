@@ -1,7 +1,10 @@
 package server;
 
 import java.awt.*;
+import java.awt.event.*;
 import java.net.*;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Enumeration;
 import javax.swing.*;
 
@@ -74,6 +77,30 @@ public class ServerGUI extends JFrame {
             boolean hasSelection = clientList.getSelectedValue() != null;
             boolean isRunning = chatServer != null && chatServer.isRunning();
             kickButton.setEnabled(hasSelection && isRunning);
+        });
+
+        clientList.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                int index = clientList.locationToIndex(e.getPoint());
+                if (index >= 0 && clientList.getCellBounds(index, index) != null
+                        && clientList.getCellBounds(index, index).contains(e.getPoint())) {
+                    String selected = clientListModel.getElementAt(index);
+                    displayClientInfo(selected);
+                }
+            }
+        });
+
+        clientList.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyReleased(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_UP || e.getKeyCode() == KeyEvent.VK_DOWN) {
+                    String selected = clientList.getSelectedValue();
+                    if (selected != null) {
+                        displayClientInfo(selected);
+                    }
+                }
+            }
         });
 
         JPanel leftPanel = new JPanel(new BorderLayout(5, 5));
@@ -187,6 +214,25 @@ public class ServerGUI extends JFrame {
                 JOptionPane.showMessageDialog(this, "Không thể xóa client (có thể client đã ngắt kết nối).", "Lỗi", JOptionPane.ERROR_MESSAGE);
             }
         }
+    }
+
+    private void displayClientInfo(String username) {
+        if (username == null || clientManager == null) {
+            return;
+        }
+        ClientHandler client = clientManager.getClient(username);
+        if (client == null) {
+            return;
+        }
+
+        String timeNow = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+        String ip = client.getClientIp();
+        int port = client.getClientPort();
+        String room = client.getCurrentRoom();
+        String connectTime = client.getConnectedTime();
+
+        appendLog(String.format("[%s] [THÔNG TIN CLIENT] Tên: %s | IP: %s (Port: %d) | Phòng: %s | Thời gian kết nối: %s",
+                timeNow, username, ip, port, room, connectTime));
     }
 
     public void appendLog(String message) {
