@@ -12,6 +12,7 @@ public class ChatServer {
     private final RoomManager roomManager;
     private ServerSocket serverSocket;
     private volatile boolean running = false;
+    private volatile boolean locked = false;
     private ServerGUI serverGUI;
 
     public ChatServer(ClientManager clientManager, ServerGUI serverGUI, RoomManager roomManager) {
@@ -50,7 +51,7 @@ public class ChatServer {
                     serverGUI.appendLog("Client mới kết nối: " + clientSocket.getInetAddress().getHostAddress());
                 }
 
-                ClientHandler clientHandler = new ClientHandler(clientSocket, clientManager, roomManager);
+                ClientHandler clientHandler = new ClientHandler(clientSocket, clientManager, roomManager, this);
                 Thread clientThread = new Thread(clientHandler);
                 clientThread.start();
             } catch (IOException e) {
@@ -63,6 +64,7 @@ public class ChatServer {
 
     public void stopServer() {
         running = false;
+        locked = false;
         if (clientManager != null) {
             clientManager.disconnectAllClients();
         }
@@ -75,6 +77,15 @@ public class ChatServer {
                 serverGUI.appendLog("Lỗi khi dừng Server: " + e.getMessage());
             }
         }
+    }
+
+    public boolean isLocked() {
+        return locked;
+    }
+
+    public boolean toggleLock() {
+        locked = !locked;
+        return locked;
     }
 
     public boolean isRunning() {

@@ -16,9 +16,12 @@ public class ServerGUI extends JFrame {
 
     private JTextArea logArea;
     private DefaultListModel<String> clientListModel;
+    private JList<String> clientList;
 
     private JButton startButton;
     private JButton stopButton;
+    private JButton kickButton;
+    private JButton lockButton;
 
     public ServerGUI(ClientManager clientManager) {
         this.clientManager = clientManager;
@@ -58,9 +61,24 @@ public class ServerGUI extends JFrame {
         headerPanel.add(infoPanel, BorderLayout.SOUTH);
 
         clientListModel = new DefaultListModel<>();
-        JList<String> clientList = new JList<>(clientListModel);
+        clientList = new JList<>(clientListModel);
+        clientList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane clientScroll = new JScrollPane(clientList);
         clientScroll.setBorder(BorderFactory.createTitledBorder("Client đang online"));
+
+        kickButton = new JButton("Xóa Client (Kick)");
+        kickButton.setEnabled(false);
+        kickButton.addActionListener(e -> kickSelectedClient());
+
+        clientList.addListSelectionListener(e -> {
+            boolean hasSelection = clientList.getSelectedValue() != null;
+            boolean isRunning = chatServer != null && chatServer.isRunning();
+            kickButton.setEnabled(hasSelection && isRunning);
+        });
+
+        JPanel leftPanel = new JPanel(new BorderLayout(5, 5));
+        leftPanel.add(clientScroll, BorderLayout.CENTER);
+        leftPanel.add(kickButton, BorderLayout.SOUTH);
 
         logArea = new JTextArea();
         logArea.setEditable(false);
@@ -68,19 +86,24 @@ public class ServerGUI extends JFrame {
         JScrollPane logScroll = new JScrollPane(logArea);
         logScroll.setBorder(BorderFactory.createTitledBorder("Server Log"));
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, clientScroll, logScroll);
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, logScroll);
         splitPane.setDividerLocation(250);
 
         startButton = new JButton("Start Server");
         stopButton = new JButton("Stop Server");
         stopButton.setEnabled(false);
 
+        lockButton = new JButton("Khóa Server");
+        lockButton.setEnabled(false);
+
         startButton.addActionListener(e -> startServer());
         stopButton.addActionListener(e -> stopServer());
+        lockButton.addActionListener(e -> toggleLockServer());
 
         JPanel buttonPanel = new JPanel();
         buttonPanel.add(startButton);
         buttonPanel.add(stopButton);
+        buttonPanel.add(lockButton);
 
         add(headerPanel, BorderLayout.NORTH);
         add(splitPane, BorderLayout.CENTER);
@@ -101,6 +124,9 @@ public class ServerGUI extends JFrame {
             statusLabel.setText("● Server đang chạy");
             startButton.setEnabled(false);
             stopButton.setEnabled(true);
+            lockButton.setEnabled(true);
+            lockButton.setText("Khóa Server");
+            lockButton.setForeground(Color.BLACK);
             appendLog("Server đã bắt đầu chạy tại IP: " + serverIp + " trên port 5000.");
             appendLog("Gợi ý: Nhập IP trên vào ô 'IP Server' của Client để kết nối qua Wi-Fi/LAN.");
         }
@@ -113,7 +139,54 @@ public class ServerGUI extends JFrame {
         statusLabel.setText("● Server đang dừng");
         startButton.setEnabled(true);
         stopButton.setEnabled(false);
+        lockButton.setEnabled(false);
+        lockButton.setText("Khóa Server");
+        lockButton.setForeground(Color.BLACK);
+        kickButton.setEnabled(false);
         appendLog("Server đã dừng.");
+    }
+
+    private void toggleLockServer() {
+        if (chatServer == null || !chatServer.isRunning()) {
+            return;
+        }
+        boolean locked = chatServer.toggleLock();
+        if (locked) {
+            lockButton.setText("Mở khóa Server");
+            lockButton.setForeground(new Color(200, 0, 0));
+            statusLabel.setText("● Server đang chạy [ĐÃ KHÓA]");
+            appendLog("[ADMIN] Server đã bị KHÓA. Chặn tất cả kết nối mới.");
+        } else {
+            lockButton.setText("Khóa Server");
+            lockButton.setForeground(Color.BLACK);
+            statusLabel.setText("● Server đang chạy");
+            appendLog("[ADMIN] Server đã MỞ KHÓA. Cho phép kết nối mới bình thường.");
+        }
+    }
+
+    private void kickSelectedClient() {
+        String selected = clientList.getSelectedValue();
+        if (selected == null) {
+            JOptionPane.showMessageDialog(this, "Vui lòng chọn một client từ danh sách để xóa.", "Thông báo", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(
+            this,
+            "Bạn có chắc muốn xóa client '" + selected + "' ra khỏi server?",
+            "Xác nhận xóa Client",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.QUESTION_MESSAGE
+        );
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            boolean success = clientManager.kickClient(selected);
+            if (success) {
+                appendLog("[ADMIN] Đã xóa client '" + selected + "' ra khỏi server.");
+            } else {
+                JOptionPane.showMessageDialog(this, "Không thể xóa client (có thể client đã ngắt kết nối).", "Lỗi", JOptionPane.ERROR_MESSAGE);
+            }
+        }
     }
 
     public void appendLog(String message) {
@@ -125,9 +198,15 @@ public class ServerGUI extends JFrame {
 
     public void refreshClientList() {
         SwingUtilities.invokeLater(() -> {
+            String selected = clientList.getSelectedValue();
             clientListModel.clear();
             for (String username : clientManager.getUsernames()) {
                 clientListModel.addElement(username);
+            }
+            if (selected != null && clientListModel.contains(selected)) {
+                clientList.setSelectedValue(selected, true);
+            } else {
+                kickButton.setEnabled(false);
             }
             clientCountLabel.setText("Client online: " + clientManager.getClientCount());
         });
