@@ -87,6 +87,18 @@ public class ClientManager {
         return usernames;
     }
 
+    public ClientHandler getClient(String username) {
+        if (username == null) {
+            return null;
+        }
+        for (ClientHandler client : clients) {
+            if (client.getUsername() != null && client.getUsername().equalsIgnoreCase(username)) {
+                return client;
+            }
+        }
+        return null;
+    }
+
     public Set<ClientHandler> getClients() {
         return clients;
     }
