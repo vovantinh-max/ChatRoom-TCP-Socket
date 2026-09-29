@@ -61,8 +61,8 @@ public class ClientHandler implements Runnable {
             }
 
             if (chatServer != null && chatServer.isLocked()) {
-                writer.println("LOGIN_FAILED|May chu dang bi khoa boi Quan tri vien.");
-                clientManager.logMessage(getTimestamp() + " [LOCK] Tu choi ket noi tu '" + username + "' do Server dang bi khoa.");
+                writer.println("LOGIN_FAILED|Máy chủ đang bị khóa hoặc tạm dừng hoạt động.");
+                clientManager.logMessage(getTimestamp() + " [LOCK] Từ chối kết nối từ '" + username + "' do Server đang bị khóa.");
                 return;
             }
 
@@ -436,6 +436,7 @@ public class ClientHandler implements Runnable {
 
     public void kick(String reason) {
         try {
+            sendMessage("KICK|" + reason);
             sendMessage("ERROR|" + reason);
             if (socket != null && !socket.isClosed()) {
                 socket.close();

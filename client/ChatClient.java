@@ -55,6 +55,22 @@ public class ChatClient {
             true
         );
 
+        sendRawMessage("LOGIN|" + username);
+
+        String initialResponse = reader.readLine();
+        if (initialResponse == null) {
+            disconnect();
+            throw new IOException("Máy chủ đã đóng kết nối hoặc đang tạm dừng hoạt động.");
+        }
+
+        if (initialResponse.startsWith("LOGIN_FAILED|") || initialResponse.equals("USERNAME_TAKEN")) {
+            disconnect();
+            String reason = initialResponse.startsWith("LOGIN_FAILED|")
+                    ? initialResponse.substring(13).trim()
+                    : "Tên người dùng đã tồn tại.";
+            throw new IOException(reason);
+        }
+
         this.connected = true;
 
         this.serverListener = new ServerListener(reader, this);
@@ -62,7 +78,11 @@ public class ChatClient {
         this.listenerThread.setDaemon(true);
         this.listenerThread.start();
 
-        sendRawMessage("LOGIN|" + username);
+        if (initialResponse.equals("LOGIN_SUCCESS") || initialResponse.equals("LOGIN_OK")) {
+            notifySystemMessage("Đăng nhập thành công!");
+        } else {
+            serverListener.processMessage(initialResponse);
+        }
 
         return true;
     }
@@ -152,7 +172,7 @@ public class ChatClient {
     }
 
     void notifyDisconnected(String reason) {
-        connected = false;
+        disconnect();
         if (eventListener != null) {
             eventListener.onDisconnected(reason);
         }

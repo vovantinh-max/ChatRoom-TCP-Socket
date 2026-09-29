@@ -27,15 +27,16 @@ public class ServerListener implements Runnable {
                 processMessage(line);
             }
         } catch (IOException e) {
-            if (running) {
-                client.notifyDisconnected("Mất kết nối với Server (" + e.getMessage() + ")");
-            }
+            // connection dropped
         } finally {
-            running = false;
+            if (running) {
+                running = false;
+                client.notifyDisconnected("Mất kết nối với Server.");
+            }
         }
     }
 
-    private void processMessage(String message) {
+    void processMessage(String message) {
         String[] parts = message.split("\\|", -1);
         String command = parts[0];
 
@@ -100,6 +101,13 @@ public class ServerListener implements Runnable {
             case "LOGIN_SUCCESS":
             case "LOGIN_OK":
                 client.notifySystemMessage("Đăng nhập thành công!");
+                break;
+
+            case "KICK":
+            case "DISCONNECT":
+                String kickReason = (parts.length >= 2) ? parts[1] : "Bạn đã bị xóa khỏi Server.";
+                running = false;
+                client.notifyDisconnected(kickReason);
                 break;
 
             case "LOGIN_FAILED":
