@@ -13,6 +13,7 @@ public class ClientHandler implements Runnable {
     private final Socket socket;
     private final ClientManager clientManager;
     private final RoomManager roomManager;
+    private final ChatServer chatServer;
 
     private BufferedReader reader;
     private PrintWriter writer;
@@ -23,10 +24,15 @@ public class ClientHandler implements Runnable {
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
-    public ClientHandler(Socket socket, ClientManager clientManager, RoomManager roomManager) {
+    public ClientHandler(Socket socket, ClientManager clientManager, RoomManager roomManager, ChatServer chatServer) {
         this.socket = socket;
         this.clientManager = clientManager;
         this.roomManager = roomManager;
+        this.chatServer = chatServer;
+    }
+
+    public ClientHandler(Socket socket, ClientManager clientManager, RoomManager roomManager) {
+        this(socket, clientManager, roomManager, null);
     }
 
     @Override
@@ -49,6 +55,12 @@ public class ClientHandler implements Runnable {
 
             if (username.isEmpty()) {
                 writer.println("LOGIN_FAILED|Username khong hop le.");
+                return;
+            }
+
+            if (chatServer != null && chatServer.isLocked()) {
+                writer.println("LOGIN_FAILED|May chu dang bi khoa boi Quan tri vien.");
+                clientManager.logMessage(getTimestamp() + " [LOCK] Tu choi ket noi tu '" + username + "' do Server dang bi khoa.");
                 return;
             }
 
@@ -136,7 +148,9 @@ public class ClientHandler implements Runnable {
             }
 
         } catch (IOException e) {
-            clientManager.logMessage(getTimestamp() + " [ERROR] Client " + username + ": " + e.getMessage());
+            if (socket != null && !socket.isClosed()) {
+                clientManager.logMessage(getTimestamp() + " [ERROR] Client " + username + ": " + e.getMessage());
+            }
         } finally {
             disconnect();
         }
@@ -391,6 +405,17 @@ public class ClientHandler implements Runnable {
     public void closeConnection() {
         try {
             sendMessage("SYSTEM|Máy chủ đã dừng kết nối.");
+            if (socket != null && !socket.isClosed()) {
+                socket.close();
+            }
+        } catch (IOException e) {
+            // ignore
+        }
+    }
+
+    public void kick(String reason) {
+        try {
+            sendMessage("ERROR|" + reason);
             if (socket != null && !socket.isClosed()) {
                 socket.close();
             }

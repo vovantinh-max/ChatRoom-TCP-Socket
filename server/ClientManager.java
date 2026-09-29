@@ -32,6 +32,22 @@ public class ClientManager {
         updateGUI();
     }
 
+    public boolean kickClient(String username) {
+        if (username == null) {
+            return false;
+        }
+        for (ClientHandler client : clients) {
+            if (client.getUsername() != null && client.getUsername().equalsIgnoreCase(username)) {
+                client.kick("Bạn đã bị Quản trị viên xóa khỏi Server.");
+                clients.remove(client);
+                logMessage("[ADMIN] Đã xóa client '" + username + "' khỏi server.");
+                updateGUI();
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void broadcast(String message) {
         for (ClientHandler client : clients) {
             client.sendMessage(message);
