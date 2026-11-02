@@ -3,6 +3,8 @@ package client;
 import client.ChatClient.FriendItem;
 import client.ChatClient.SearchUserItem;
 import shared.protocol.Packet;
+import shared.protocol.HistoryCodec;
+import shared.protocol.ContactCodec;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -50,6 +52,14 @@ public class ServerListener implements Runnable {
         client.notifyPacket(packet);
 
         switch (packet.getType()) {
+            case MESSAGE_ACK:
+                client.deliveryResult(packet.getContent(), true, "Tin nhắn đã được lưu trên máy chủ.");
+                break;
+
+            case MESSAGE_FAILED:
+                client.deliveryResult(packet.getId(), false, packet.getContent());
+                break;
+
             case PONG:
                 client.handlePong();
                 break;
@@ -61,6 +71,10 @@ public class ServerListener implements Runnable {
 
             case USER_LIST:
                 parseUserList(packet.getContent());
+                break;
+
+            case JOIN_ROOM:
+                client.notifyRoomChanged(packet.getContent());
                 break;
 
             case ROOM_LIST:
@@ -101,7 +115,7 @@ public class ServerListener implements Runnable {
                 break;
 
             case HISTORY_RESPONSE:
-                parseHistoryResponse(packet.getRecipient(), packet.getContent());
+                parseHistoryResponse(packet.getRecipient(), packet.getContent(), packet.getExtra());
                 break;
 
             // ─── SIGNALING GỌI THOẠI & VIDEO (MODULE 4, 5, 6, 7) ──────────────
@@ -133,11 +147,17 @@ public class ServerListener implements Runnable {
 
             // ─── TÍNH NĂNG BẠN BÈ & USER (MODULE 2) ───────────────────────────
             case FRIEND_REQUEST:
-                client.notifySystemMessage("🔔 @" + packet.getSender() + " vừa gửi cho bạn một lời mời kết bạn!");
+                client.notifySystemMessage("@" + packet.getSender() + " vừa gửi cho bạn một lời mời kết bạn.");
+                break;
+
+            case FRIEND_ACTION_RESULT:
+                String[] result = (packet.getExtra() == null ? "" : packet.getExtra()).split(":", 2);
+                if (result.length == 2) client.notifyFriendActionResult(result[0], packet.getRecipient(),
+                        "SUCCESS".equals(result[1]), packet.getContent());
                 break;
 
             case FRIEND_LIST:
-                parseFriendList(packet.getContent());
+                parseFriendList(packet.getContent(), packet.getExtra());
                 break;
 
             case FRIEND_PENDING_LIST:
@@ -145,7 +165,7 @@ public class ServerListener implements Runnable {
                 break;
 
             case USER_SEARCH_RESULT:
-                parseUserSearchResult(packet.getContent());
+                parseUserSearchResult(packet.getId(), packet.getContent(), packet.getExtra());
                 break;
 
             case USER_STATUS_CHANGE:
@@ -175,14 +195,14 @@ public class ServerListener implements Runnable {
         }
     }
 
-    private void parseFriendList(String content) {
+    private void parseFriendList(String content, String format) {
         List<FriendItem> list = new ArrayList<>();
         if (content != null && !content.trim().isEmpty()) {
             for (String entry : content.split(";")) {
                 String[] parts = entry.split(",", -1);
                 if (parts.length >= 3) {
-                    String username = parts[0].trim();
-                    String displayName = parts[1].trim();
+                    String username = ContactCodec.decode(parts[0].trim(), format);
+                    String displayName = ContactCodec.decode(parts[1].trim(), format);
                     String status = parts[2].trim();
                     boolean isOnline = "ONLINE".equalsIgnoreCase(status);
                     list.add(new FriendItem(username, displayName, status, isOnline));
@@ -205,17 +225,17 @@ public class ServerListener implements Runnable {
         client.notifyPendingRequests(list);
     }
 
-    private void parseUserSearchResult(String content) {
+    private void parseUserSearchResult(String requestId, String content, String format) {
         List<SearchUserItem> list = new ArrayList<>();
         if (content != null && !content.trim().isEmpty()) {
             for (String entry : content.split(";")) {
                 String[] parts = entry.split(",", -1);
                 if (parts.length >= 3) {
-                    list.add(new SearchUserItem(parts[0].trim(), parts[1].trim(), parts[2].trim()));
+                    list.add(new SearchUserItem(ContactCodec.decode(parts[0].trim(), format), ContactCodec.decode(parts[1].trim(), format), parts[2].trim()));
                 }
             }
         }
-        client.notifyUserSearchResult(list);
+        client.notifyUserSearchResult(requestId, list);
     }
 
     private void parseUserList(String userString) {
@@ -244,27 +264,21 @@ public class ServerListener implements Runnable {
         client.notifyRoomList(rooms);
     }
 
-    private void parseHistoryResponse(String target, String content) {
-        List<ChatClient.ChatMessageItem> list = new ArrayList<>();
-        if (content != null && !content.trim().isEmpty()) {
-            for (String itemStr : content.split(";;")) {
-                String[] parts = itemStr.split("::", -1);
-                if (parts.length >= 9) {
-                    String uuid = parts[0];
-                    String sender = parts[1];
-                    String recipient = parts[2];
-                    String text = parts[3];
-                    String replyTo = parts[4];
-                    boolean isEdited = "1".equals(parts[5]);
-                    boolean isRevoked = "1".equals(parts[6]);
-                    String reactions = parts[7];
-                    long timestamp = 0;
-                    try { timestamp = Long.parseLong(parts[8]); } catch (NumberFormatException ignored) {}
-                    list.add(new ChatClient.ChatMessageItem(uuid, sender, recipient, text, replyTo, isEdited, isRevoked, reactions, timestamp));
-                }
+    private void parseHistoryResponse(String target, String content, String format) {
+        List<ChatClient.ChatMessageItem> messages = new ArrayList<>();
+        try {
+            List<String[]> rows;
+            if (format != null && format.startsWith(HistoryCodec.FORMAT + ":")) rows = HistoryCodec.decode(content);
+            else {
+                rows = new ArrayList<>();
+                if (content != null && !content.isBlank()) for (String row : content.split(";;")) rows.add(row.split("::", -1));
             }
-        }
-        client.notifyHistoryLoaded(target, list);
+            for (String[] f : rows) {
+                if (f.length != 9) throw new IllegalArgumentException("Invalid history record");
+                messages.add(new ChatClient.ChatMessageItem(f[0], f[1], f[2], f[3], f[4], "1".equals(f[5]), "1".equals(f[6]), f[7], Long.parseLong(f[8])));
+            }
+            client.notifyHistoryLoaded(target, messages);
+        } catch (IllegalArgumentException e) { client.notifySystemMessage("Không thể đọc lịch sử. Vui lòng tải lại cuộc trò chuyện."); }
     }
 
     public void stopListening() {

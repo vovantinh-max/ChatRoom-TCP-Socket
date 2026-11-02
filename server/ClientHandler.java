@@ -4,6 +4,10 @@ import server.db.DatabaseManager;
 import server.db.DatabaseManager.FriendRecord;
 import server.db.DatabaseManager.UserRecord;
 import shared.protocol.Packet;
+import shared.protocol.BoundedLineReader;
+import shared.protocol.ProtocolLimits;
+import shared.protocol.HistoryCodec;
+import shared.protocol.ContactCodec;
 
 import java.io.*;
 import java.net.Socket;
@@ -13,6 +17,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * ClientHandler - Xử lý từng kết nối Client trên Server.
@@ -30,6 +36,7 @@ public class ClientHandler implements Runnable {
     private BufferedReader reader;
     private PrintWriter writer;
     private final Object writeLock = new Object();
+    private final CountDownLatch finished = new CountDownLatch(1);
 
     private String username;
     private String displayName;
@@ -62,14 +69,16 @@ public class ClientHandler implements Runnable {
         try {
             socket.setTcpNoDelay(true);
             socket.setKeepAlive(true);
+            socket.setSoTimeout(15000);
 
-            reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            reader = BoundedLineReader.create(socket.getInputStream());
             writer = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
 
             // Xử lý xác thực ban đầu (LOGIN hoặc REGISTER)
             if (!handleInitialHandshake()) {
                 return;
             }
+            socket.setSoTimeout(60000);
 
             // Vòng lặp nhận dữ liệu sau khi đăng nhập thành công
             String line;
@@ -86,7 +95,12 @@ public class ClientHandler implements Runnable {
                 clientManager.logMessage(getTimestamp() + " [DISCONNECT] Client " + username + ": " + e.getMessage());
             }
         } finally {
-            disconnect();
+            try {
+                disconnect();
+            } finally {
+                if (chatServer != null) chatServer.onClientDisconnected(this);
+                finished.countDown();
+            }
         }
     }
 
@@ -110,10 +124,10 @@ public class ClientHandler implements Runnable {
             if (packet.getType() == Packet.Type.REGISTER) {
                 try {
                     String regUser = packet.getSender() != null ? packet.getSender().trim() : "";
-                    String regPass = packet.getContent() != null ? packet.getContent().trim() : "";
+                    String regPass = packet.getContent() != null ? packet.getContent() : "";
                     String regName = packet.getExtra() != null ? packet.getExtra().trim() : regUser;
 
-                    if (regUser.length() < 3 || regPass.length() < 4) {
+                    if (!regUser.matches("[A-Za-z0-9_.-]{3,32}") || regPass.length() < 4 || regPass.length() > 256 || regName.length() > 80) {
                         sendPacket(new Packet(Packet.Type.REGISTER_FAILED, "SERVER", "Tên đăng nhập tối thiểu 3 ký tự, mật khẩu tối thiểu 4 ký tự."));
                         continue;
                     }
@@ -143,7 +157,7 @@ public class ClientHandler implements Runnable {
                     String reqUser = packet.getSender() != null ? packet.getSender().trim() : "";
                     String reqPass = packet.getContent() != null ? packet.getContent() : "";
 
-                    if (reqUser.isEmpty()) {
+                    if (!reqUser.matches("[A-Za-z0-9_.-]{3,32}") || reqPass.length() > 256) {
                         sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Username không hợp lệ."));
                         return false;
                     }
@@ -153,28 +167,14 @@ public class ClientHandler implements Runnable {
                         return false;
                     }
 
-                    // Kiểm tra Database
-                    if (databaseManager.userExists(reqUser)) {
-                        // Nếu tài khoản đã có mật khẩu trong DB, kiểm tra mật khẩu
-                        if (reqPass != null && !reqPass.isEmpty()) {
-                            UserRecord auth = databaseManager.authenticate(reqUser, reqPass);
-                            if (auth == null) {
-                                sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Mật khẩu không chính xác."));
-                                continue;
-                            }
-                            this.displayName = auth.displayName();
-                        } else {
-                            // Khách đăng nhập không pass vào tài khoản đã tồn tại
-                            this.displayName = reqUser;
-                        }
-                    } else {
-                        // Tự động khởi tạo tài khoản nếu chưa có
-                        String defaultPass = (reqPass != null && !reqPass.isEmpty()) ? reqPass : "123456";
-                        databaseManager.registerUser(reqUser, defaultPass, reqUser);
-                        this.displayName = reqUser;
+                    UserRecord auth = reqPass.isEmpty() ? null : databaseManager.authenticate(reqUser, reqPass);
+                    if (auth == null) {
+                        sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Tài khoản hoặc mật khẩu không chính xác."));
+                        return false;
                     }
 
-                    this.username = reqUser;
+                    this.username = auth.username();
+                    this.displayName = auth.displayName();
                     break;
                 } catch (Throwable t) {
                     System.err.println("[ClientHandler] Lỗi đăng nhập: " + t.getMessage());
@@ -185,13 +185,22 @@ public class ClientHandler implements Runnable {
         }
 
         // Đăng nhập thành công
-        sendPacket(new Packet(Packet.Type.LOGIN_SUCCESS, "SERVER", "Đăng nhập thành công!"));
-        clientManager.addClient(this);
-        registered = true;
+        // Keep broadcasts behind LOGIN_SUCCESS while publishing this session.
+        synchronized (writeLock) {
+            synchronized (clientManager) {
+                if (!clientManager.tryAddClient(this)) {
+                    sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Tài khoản đang online trên thiết bị khác."));
+                    return false;
+                }
+                registered = true;
+            }
+            sendPacket(new Packet(Packet.Type.LOGIN_SUCCESS, "SERVER", "Đăng nhập thành công!"));
+        }
         lastHeartbeatTime = System.currentTimeMillis();
 
         databaseManager.updateUserStatus(username, "ONLINE");
 
+        databaseManager.addGroupMember("General", username, "MEMBER");
         roomManager.joinRoom("General", this);
         currentRoom = "General";
 
@@ -266,7 +275,7 @@ public class ClientHandler implements Runnable {
                 break;
 
             case USER_SEARCH:
-                handleUserSearch(packet.getContent());
+                handleUserSearch(packet);
                 break;
 
             case USER_STATUS_CHANGE:
@@ -346,163 +355,182 @@ public class ClientHandler implements Runnable {
             return;
         }
 
+        if (packet.getRecipient() != null && !packet.getRecipient().isEmpty()
+                && !packet.getRecipient().equalsIgnoreCase("#" + currentRoom)) {
+            messageFailed(packet, "Hãy quay lại phòng gốc trước khi gửi lại tin nhắn."); return;
+        }
         String uuid = packet.getId() != null && !packet.getId().isEmpty() ? packet.getId() : java.util.UUID.randomUUID().toString();
         packet.setId(uuid);
         packet.setSender(username);
         packet.setRecipient("#" + currentRoom);
 
-        // Lưu vào SQLite Database
-        databaseManager.saveMessage(uuid, "PUBLIC", currentRoom, username, null, content, packet.getExtra(), packet.getTimestamp());
+        packet.setContent(content);
+        if (!validateMessage(packet, currentRoom, true)) return;
+        DatabaseManager.MessageWriteResult saved = persistMessage(packet, "PUBLIC", currentRoom, null);
+        if (saved == DatabaseManager.MessageWriteResult.CREATED) {
+            roomManager.broadcastToRoom(currentRoom, packet.toRawString());
+        }
+    }
 
-        // Gửi ACK về cho người gửi
-        sendPacket(new Packet(Packet.Type.MESSAGE_ACK, "SERVER", uuid));
+    private boolean validateMessage(Packet packet, String target, boolean isPublic) {
+        String content = packet.getContent();
+        if (content == null || content.isBlank() || content.length() > ProtocolLimits.MAX_MESSAGE_CHARS) {
+            messageFailed(packet, "Tin nhắn phải có từ 1 đến " + ProtocolLimits.MAX_MESSAGE_CHARS + " ký tự.");
+            return false;
+        }
+        String reply = packet.getExtra();
+        if (reply != null && !reply.isBlank()) {
+            DatabaseManager.MessageRecord original = databaseManager.getMessage(reply);
+            String conversation = isPublic ? target : DatabaseManager.getPrivateConversationTarget(username, target);
+            if (original == null || !original.convType().equals(isPublic ? "PUBLIC" : "PRIVATE")
+                    || !original.convTarget().equalsIgnoreCase(conversation) || !canReadMessage(original)) {
+                messageFailed(packet, "Tin nhắn trả lời không thuộc cuộc trò chuyện này.");
+                return false;
+            }
+        }
+        return true;
+    }
 
-        // Broadcast tới phòng chat
-        roomManager.broadcastToRoom(currentRoom, packet.toRawString());
-        clientManager.logMessage(getTimestamp() + " [" + currentRoom + "] " + username + ": " + content);
+    private void messageFailed(Packet request, String detail) {
+        Packet failure = new Packet(Packet.Type.MESSAGE_FAILED, "SERVER", request.getRecipient(), detail);
+        failure.setId(request.getId());
+        sendPacket(failure);
+    }
+
+    private DatabaseManager.MessageWriteResult persistMessage(Packet packet, String type, String target, String recipient) {
+        packet.setTimestamp(System.currentTimeMillis());
+        DatabaseManager.MessageWriteResult result = databaseManager.persistMessage(packet.getId(), type, target,
+                username, recipient, packet.getContent(), packet.getExtra(), packet.getTimestamp());
+        if (result == DatabaseManager.MessageWriteResult.CREATED || result == DatabaseManager.MessageWriteResult.DUPLICATE) {
+            Packet ack = new Packet(Packet.Type.MESSAGE_ACK, "SERVER", packet.getRecipient(), packet.getId());
+            ack.setId(packet.getId());
+            ack.setExtra("STORED");
+            sendPacket(ack);
+        } else messageFailed(packet, result == DatabaseManager.MessageWriteResult.CONFLICT
+                ? "Mã tin nhắn đã được dùng cho nội dung khác." : "Chưa lưu được tin nhắn. Vui lòng gửi lại.");
+        return result;
     }
 
     private void handlePrivatePacket(Packet packet) {
-        String recipient = packet.getRecipient() != null ? packet.getRecipient().trim() : "";
-        String content = packet.getContent() != null ? packet.getContent().trim() : "";
-
-        if (recipient.isEmpty() || content.isEmpty()) {
-            sendPacket(new Packet(Packet.Type.ERROR, "SERVER", "Tin nhắn riêng không hợp lệ."));
-            return;
-        }
-
-        String uuid = packet.getId() != null && !packet.getId().isEmpty() ? packet.getId() : java.util.UUID.randomUUID().toString();
-        packet.setId(uuid);
-        packet.setSender(username);
+        String recipient = packet.getRecipient() == null ? "" : packet.getRecipient().trim();
+        UserRecord other = databaseManager.getUser(recipient);
+        if (other == null) { messageFailed(packet, "Không tìm thấy người nhận."); return; }
+        recipient = other.username();
         packet.setRecipient(recipient);
-
-        // Lưu vào SQLite Database
-        String convTarget = DatabaseManager.getPrivateConversationTarget(username, recipient);
-        databaseManager.saveMessage(uuid, "PRIVATE", convTarget, username, recipient, content, packet.getExtra(), packet.getTimestamp());
-
-        // Gửi ACK về cho người gửi
-        sendPacket(new Packet(Packet.Type.MESSAGE_ACK, "SERVER", uuid));
-
-        // Chuyển tiếp tới người nhận nếu đang online
-        ClientHandler target = clientManager.getClient(recipient);
-        if (target != null) {
-            target.sendPacket(packet);
+        packet.setSender(username);
+        packet.setContent(packet.getContent() == null ? "" : packet.getContent().trim());
+        if (!validateMessage(packet, recipient, false)) return;
+        String conversation = DatabaseManager.getPrivateConversationTarget(username, recipient);
+        if (persistMessage(packet, "PRIVATE", conversation, recipient) == DatabaseManager.MessageWriteResult.CREATED) {
+            ClientHandler peer = clientManager.getClient(recipient);
+            if (peer != null) peer.sendPacket(packet);
         }
-
-        clientManager.logMessage(getTimestamp() + " [PRIVATE] " + username + " -> " + recipient + ": " + content);
     }
 
-    // ─── XỬ LÝ LỊCH SỬ TIN NHẮN (MODULE 3) ───────────────────────────────────
-    private void handleHistoryRequest(Packet packet) {
-        String target = packet.getRecipient() != null ? packet.getRecipient().trim() : "";
-        boolean isPublic = "PUBLIC".equalsIgnoreCase(packet.getExtra()) || target.startsWith("#");
+    private void error(String message) { sendPacket(new Packet(Packet.Type.ERROR, "SERVER", message)); }
 
-        String convType = isPublic ? "PUBLIC" : "PRIVATE";
-        String convTarget = isPublic ? target.replace("#", "").trim() : DatabaseManager.getPrivateConversationTarget(username, target);
+    private boolean canReadRoom(String room) {
+        return roomManager.roomExists(room) && currentRoom.equalsIgnoreCase(room)
+                && databaseManager.isGroupMember(room, username);
+    }
 
-        List<DatabaseManager.MessageRecord> history = databaseManager.getMessageHistory(convType, convTarget, 50, 0);
+    private boolean canReadMessage(DatabaseManager.MessageRecord message) {
+        return "PUBLIC".equals(message.convType()) ? canReadRoom(message.convTarget())
+                : username.equalsIgnoreCase(message.sender()) || username.equalsIgnoreCase(message.recipient());
+    }
 
-        StringBuilder sb = new StringBuilder();
-        for (DatabaseManager.MessageRecord msg : history) {
-            if (sb.length() > 0) sb.append(";;");
-            sb.append(msg.uuid()).append("::")
-              .append(msg.sender()).append("::")
-              .append(msg.recipient() != null ? msg.recipient() : "").append("::")
-              .append(msg.content()).append("::")
-              .append(msg.replyToId() != null ? msg.replyToId() : "").append("::")
-              .append(msg.isEdited() ? "1" : "0").append("::")
-              .append(msg.isRevoked() ? "1" : "0").append("::")
-              .append(msg.reactions() != null ? msg.reactions() : "").append("::")
-              .append(msg.timestamp());
+    private DatabaseManager.MessageRecord authorizedMessage(Packet packet, boolean ownerOnly) {
+        DatabaseManager.MessageRecord message = databaseManager.getMessage(packet.getId());
+        if (message == null || !canReadMessage(message) || (ownerOnly && !username.equalsIgnoreCase(message.sender()))) {
+            error("Bạn không có quyền thao tác với tin nhắn này.");
+            return null;
         }
+        return message;
+    }
 
-        Packet resp = new Packet(Packet.Type.HISTORY_RESPONSE, "SERVER", target, sb.toString());
-        resp.setExtra(convType);
-        sendPacket(resp);
+    private void routeMessageChange(DatabaseManager.MessageRecord original, Packet update) {
+        if ("PUBLIC".equals(original.convType())) {
+            update.setRecipient("#" + original.convTarget());
+            roomManager.broadcastToRoom(original.convTarget(), update.toRawString());
+            if (!currentRoom.equalsIgnoreCase(original.convTarget())) sendPacket(update);
+        } else {
+            String peerName = original.sender().equalsIgnoreCase(username) ? original.recipient() : original.sender();
+            update.setRecipient(peerName);
+            ClientHandler peer = clientManager.getClient(peerName);
+            if (peer != null && peer != this) peer.sendPacket(update);
+            sendPacket(update);
+        }
+    }
+
+    private void handleHistoryRequest(Packet packet) {
+        String target = packet.getRecipient() == null ? "" : packet.getRecipient().trim();
+        boolean isPublic = target.startsWith("#") || "PUBLIC".equalsIgnoreCase(packet.getExtra());
+        String conversation = isPublic ? (target.startsWith("#") ? target.substring(1) : target)
+                : DatabaseManager.getPrivateConversationTarget(username, target);
+        if ((isPublic && !canReadRoom(conversation)) || (!isPublic && !databaseManager.userExists(target))) {
+            error("Bạn không có quyền xem lịch sử cuộc trò chuyện này."); return;
+        }
+        int offset = 0;
+        try { if (packet.getContent() != null && !packet.getContent().isBlank()) offset = Integer.parseInt(packet.getContent()); }
+        catch (NumberFormatException e) { error("Trang lịch sử không hợp lệ."); return; }
+        if (offset < 0 || offset > 100000) { error("Trang lịch sử không hợp lệ."); return; }
+        String type = isPublic ? "PUBLIC" : "PRIVATE";
+        List<DatabaseManager.MessageRecord> history = databaseManager.getMessageHistory(type, conversation, 50, offset);
+        List<String[]> rows = new java.util.ArrayList<>();
+        for (DatabaseManager.MessageRecord message : history) rows.add(new String[]{message.uuid(), message.sender(),
+                isPublic ? "#" + conversation : message.recipient(), message.content(), message.replyToId(),
+                message.isEdited() ? "1" : "0", message.isRevoked() ? "1" : "0", message.reactions(), Long.toString(message.timestamp())});
+        Packet response = new Packet(Packet.Type.HISTORY_RESPONSE, "SERVER", target, HistoryCodec.encode(rows));
+        response.setExtra(HistoryCodec.FORMAT + ":" + type);
+        sendPacket(response);
     }
 
     private void handleTyping(Packet packet) {
         String target = packet.getRecipient();
         if (target == null) return;
-
-        Packet typingPkt = new Packet(Packet.Type.TYPING, username, target, packet.getContent());
+        Packet update = new Packet(Packet.Type.TYPING, username, target, "START".equals(packet.getContent()) ? "START" : "STOP");
         if (target.startsWith("#")) {
-            // Typing in room
             String room = target.substring(1);
-            for (ClientHandler ch : clientManager.getClients()) {
-                if (!ch.getUsername().equalsIgnoreCase(username) && room.equalsIgnoreCase(ch.getCurrentRoom())) {
-                    ch.sendPacket(typingPkt);
-                }
-            }
+            if (!currentRoom.equalsIgnoreCase(room) || !canReadRoom(room)) { error("Bạn chưa tham gia phòng này."); return; }
+            for (ClientHandler peer : clientManager.getClients())
+                if (peer != this && room.equalsIgnoreCase(peer.getCurrentRoom())) peer.sendPacket(update);
         } else {
-            // Typing in private chat
-            ClientHandler ch = clientManager.getClient(target);
-            if (ch != null) {
-                ch.sendPacket(typingPkt);
-            }
+            ClientHandler peer = clientManager.getClient(target);
+            if (peer != null) peer.sendPacket(update);
         }
     }
 
     private void handleReaction(Packet packet) {
-        String uuid = packet.getId();
+        DatabaseManager.MessageRecord message = authorizedMessage(packet, false);
+        if (message == null) return;
         String emoji = packet.getContent();
-        String target = packet.getRecipient();
-        if (uuid == null || emoji == null) return;
-
-        String allReactions = databaseManager.toggleReaction(uuid, username, emoji);
-
-        Packet rxPkt = new Packet(Packet.Type.REACTION, username, target, emoji);
-        rxPkt.setId(uuid);
-        rxPkt.setExtra(allReactions);
-
-        if (target != null && target.startsWith("#")) {
-            roomManager.broadcastToRoom(target.substring(1), rxPkt.toRawString());
-        } else if (target != null) {
-            ClientHandler ch = clientManager.getClient(target);
-            if (ch != null) ch.sendPacket(rxPkt);
-            sendPacket(rxPkt);
+        if (message.isRevoked() || !List.of("❤️", "👍", "😂", "😮", "😢", "🔥").contains(emoji)) {
+            error("Cảm xúc không hợp lệ hoặc tin nhắn đã thu hồi."); return;
         }
+        Packet update = new Packet(Packet.Type.REACTION, username, "", emoji);
+        update.setId(message.uuid());
+        update.setExtra(databaseManager.toggleReaction(message.uuid(), username, emoji));
+        routeMessageChange(message, update);
     }
 
     private void handleEditMessage(Packet packet) {
-        String uuid = packet.getId();
-        String newContent = packet.getContent();
-        String target = packet.getRecipient();
-        if (uuid == null || newContent == null) return;
-
-        boolean ok = databaseManager.editMessage(uuid, username, newContent);
-        if (ok) {
-            Packet editPkt = new Packet(Packet.Type.EDIT_MESSAGE, username, target, newContent);
-            editPkt.setId(uuid);
-
-            if (target != null && target.startsWith("#")) {
-                roomManager.broadcastToRoom(target.substring(1), editPkt.toRawString());
-            } else if (target != null) {
-                ClientHandler ch = clientManager.getClient(target);
-                if (ch != null) ch.sendPacket(editPkt);
-                sendPacket(editPkt);
-            }
-        }
+        DatabaseManager.MessageRecord message = authorizedMessage(packet, true);
+        if (message == null) return;
+        String content = packet.getContent();
+        if (content == null || content.isBlank() || content.length() > ProtocolLimits.MAX_MESSAGE_CHARS) { error("Nội dung chỉnh sửa không hợp lệ."); return; }
+        if (!databaseManager.editMessage(message.uuid(), username, content)) { error("Không thể sửa tin nhắn."); return; }
+        Packet update = new Packet(Packet.Type.EDIT_MESSAGE, username, "", content);
+        update.setId(message.uuid());
+        routeMessageChange(message, update);
     }
 
     private void handleRevokeMessage(Packet packet) {
-        String uuid = packet.getId();
-        String target = packet.getRecipient();
-        if (uuid == null) return;
-
-        boolean ok = databaseManager.revokeMessage(uuid, username);
-        if (ok) {
-            Packet revPkt = new Packet(Packet.Type.REVOKE_MESSAGE, username, target, "Tin nhắn đã bị thu hồi");
-            revPkt.setId(uuid);
-
-            if (target != null && target.startsWith("#")) {
-                roomManager.broadcastToRoom(target.substring(1), revPkt.toRawString());
-            } else if (target != null) {
-                ClientHandler ch = clientManager.getClient(target);
-                if (ch != null) ch.sendPacket(revPkt);
-                sendPacket(revPkt);
-            }
-        }
+        DatabaseManager.MessageRecord message = authorizedMessage(packet, true);
+        if (message == null) return;
+        if (!databaseManager.revokeMessage(message.uuid(), username)) { error("Không thể thu hồi tin nhắn."); return; }
+        Packet update = new Packet(Packet.Type.REVOKE_MESSAGE, username, "", "Tin nhắn đã bị thu hồi");
+        update.setId(message.uuid());
+        routeMessageChange(message, update);
     }
 
     // ─── SIGNALING CHO GỌI THOẠI & VIDEO (MODULE 4, 5, 6, 7) ─────────────────
@@ -524,104 +552,93 @@ public class ClientHandler implements Runnable {
     // ─── ĐIỀU PHỐI FILE CHUNKS (MODULE 8) ────────────────────────────────────
     private void handleFileRouting(Packet packet) {
         String recipient = packet.getRecipient();
-        if (recipient == null || recipient.trim().isEmpty()) return;
+        if (recipient == null || recipient.isBlank()) return;
         packet.setSender(username);
         if (recipient.startsWith("#")) {
-            roomManager.broadcastToRoom(recipient.substring(1), packet.toRawString());
+            String room = recipient.substring(1);
+            if (!currentRoom.equalsIgnoreCase(room) || !canReadRoom(room)) { error("Bạn chưa tham gia phòng này."); return; }
+            roomManager.broadcastToRoom(room, packet.toRawString());
         } else {
-            ClientHandler target = clientManager.getClient(recipient.trim());
-            if (target != null) {
-                target.sendPacket(packet);
-            }
+            ClientHandler peer = clientManager.getClient(recipient.trim());
+            if (peer != null) peer.sendPacket(packet);
         }
     }
 
     // ─── XỬ LÝ QUAN HỆ BẠN BÈ ────────────────────────────────────────────────
+    private void sendFriendResult(String operation, String target, boolean success, String message) {
+        Packet result = new Packet(Packet.Type.FRIEND_ACTION_RESULT, "SERVER", target, message);
+        result.setExtra(operation + ":" + (success ? "SUCCESS" : "ERROR"));
+        sendPacket(result);
+    }
+
     private void handleFriendRequest(String targetUsername) {
-        if (targetUsername == null || targetUsername.trim().isEmpty()) return;
-        targetUsername = targetUsername.trim();
-
-        if (targetUsername.equalsIgnoreCase(username)) {
-            sendPacket(new Packet(Packet.Type.ERROR, "SERVER", "Bạn không thể tự kết bạn với chính mình."));
-            return;
-        }
-
-        if (!databaseManager.userExists(targetUsername)) {
-            sendPacket(new Packet(Packet.Type.ERROR, "SERVER", "Không tìm thấy người dùng: @" + targetUsername));
-            return;
-        }
-
-        if (databaseManager.isFriend(username, targetUsername)) {
-            sendPacket(new Packet(Packet.Type.ERROR, "SERVER", "Bạn và @" + targetUsername + " đã là bạn bè."));
-            return;
-        }
-
-        boolean sent = databaseManager.sendFriendRequest(username, targetUsername);
-        if (sent) {
-            sendPacket(new Packet(Packet.Type.SYSTEM, "SERVER", "✓ Đã gửi lời mời kết bạn tới @" + targetUsername));
-
-            // Nếu người nhận đang online, gửi thông báo trực tiếp thời gian thực
-            ClientHandler targetClient = clientManager.getClient(targetUsername);
-            if (targetClient != null) {
-                targetClient.sendPacket(new Packet(Packet.Type.FRIEND_REQUEST, username, ""));
-                targetClient.sendPacket(new Packet(Packet.Type.SYSTEM, "SERVER", "🔔 @" + username + " vừa gửi cho bạn một lời mời kết bạn!"));
-                targetClient.sendPendingFriendRequests();
+        String target = targetUsername == null ? "" : targetUsername.trim();
+        boolean success = databaseManager.sendFriendRequest(username, target);
+        sendFriendResult("REQUEST", target, success, success
+                ? "Đã gửi lời mời kết bạn tới @" + target
+                : "Không thể gửi: tài khoản không tồn tại, đã là bạn bè hoặc đã có lời mời đang chờ.");
+        if (success) {
+            ClientHandler receiver = clientManager.getClient(target);
+            if (receiver != null) {
+                receiver.sendPacket(new Packet(Packet.Type.FRIEND_REQUEST, username, ""));
+                receiver.sendPendingFriendRequests();
             }
-        } else {
-            sendPacket(new Packet(Packet.Type.ERROR, "SERVER", "Không thể gửi lời mời kết bạn (hoặc lời mời đã tồn tại)."));
         }
     }
 
     private void handleFriendAccept(String senderUsername) {
-        if (senderUsername == null || senderUsername.trim().isEmpty()) return;
-        senderUsername = senderUsername.trim();
-
-        boolean ok = databaseManager.acceptFriendRequest(username, senderUsername);
-        if (ok) {
-            sendPacket(new Packet(Packet.Type.SYSTEM, "SERVER", "✓ Bạn và @" + senderUsername + " đã trở thành bạn bè!"));
+        String target = senderUsername == null ? "" : senderUsername.trim();
+        boolean success = databaseManager.acceptFriendRequest(username, target);
+        sendFriendResult("ACCEPT", target, success, success
+                ? "Bạn và @" + target + " đã trở thành bạn bè."
+                : "Lời mời không còn tồn tại hoặc đã được xử lý.");
+        sendPendingFriendRequests();
+        if (success) {
             sendFriendList();
-
-            ClientHandler senderClient = clientManager.getClient(senderUsername);
-            if (senderClient != null) {
-                senderClient.sendPacket(new Packet(Packet.Type.SYSTEM, "SERVER", "🎉 @" + username + " đã chấp nhận lời mời kết bạn của bạn!"));
-                senderClient.sendFriendList();
+            ClientHandler sender = clientManager.getClient(target);
+            if (sender != null) {
+                sender.sendFriendList();
+                sender.sendPendingFriendRequests();
+                sender.sendPacket(new Packet(Packet.Type.SYSTEM, "SERVER", "@" + username + " đã chấp nhận lời mời kết bạn."));
             }
         }
     }
 
     private void handleFriendReject(String senderUsername) {
-        if (senderUsername == null || senderUsername.trim().isEmpty()) return;
-        databaseManager.rejectFriendRequest(username, senderUsername.trim());
+        String target = senderUsername == null ? "" : senderUsername.trim();
+        boolean success = databaseManager.rejectFriendRequest(username, target);
+        sendFriendResult("REJECT", target, success, success
+                ? "Đã từ chối lời mời từ @" + target : "Lời mời không còn tồn tại hoặc đã được xử lý.");
         sendPendingFriendRequests();
     }
 
     private void handleFriendRemove(String targetUsername) {
-        if (targetUsername == null || targetUsername.trim().isEmpty()) return;
-        targetUsername = targetUsername.trim();
-
-        boolean ok = databaseManager.removeFriend(username, targetUsername);
-        if (ok) {
-            sendPacket(new Packet(Packet.Type.SYSTEM, "SERVER", "Đã hủy kết bạn với @" + targetUsername));
-            sendFriendList();
-
-            ClientHandler targetClient = clientManager.getClient(targetUsername);
-            if (targetClient != null) {
-                targetClient.sendFriendList();
-            }
+        String target = targetUsername == null ? "" : targetUsername.trim();
+        boolean success = databaseManager.removeFriend(username, target);
+        sendFriendResult("REMOVE", target, success, success
+                ? "Đã hủy kết bạn với @" + target : "Quan hệ bạn bè không còn tồn tại.");
+        sendFriendList();
+        if (success) {
+            ClientHandler other = clientManager.getClient(target);
+            if (other != null) other.sendFriendList();
         }
     }
 
-    private void handleUserSearch(String query) {
+    private void handleUserSearch(Packet request) {
+        String query = request.getContent();
         List<UserRecord> results = databaseManager.searchUsers(query, username);
         StringBuilder sb = new StringBuilder();
         for (UserRecord u : results) {
             if (sb.length() > 0) sb.append(";");
-            boolean isFr = databaseManager.isFriend(username, u.username());
-            sb.append(u.username()).append(",")
-              .append(u.displayName()).append(",")
-              .append(isFr ? "FRIEND" : "STRANGER");
+            String relationship = databaseManager.getFriendRelationship(username, u.username());
+            sb.append(ContactCodec.encode(u.username())).append(",")
+              .append(ContactCodec.encode(u.displayName())).append(",")
+              .append(relationship);
         }
-        sendPacket(new Packet(Packet.Type.USER_SEARCH_RESULT, "SERVER", sb.toString()));
+        Packet response = new Packet(Packet.Type.USER_SEARCH_RESULT, "SERVER", sb.toString());
+        response.setExtra(ContactCodec.FORMAT);
+        response.setId(request.getId());
+        sendPacket(response);
     }
 
     private void handleUserStatusChange(String status) {
@@ -636,11 +653,13 @@ public class ClientHandler implements Runnable {
         for (FriendRecord f : friends) {
             if (sb.length() > 0) sb.append(";");
             boolean isOnline = clientManager.getClient(f.username()) != null;
-            sb.append(f.username()).append(",")
-              .append(f.displayName()).append(",")
+            sb.append(ContactCodec.encode(f.username())).append(",")
+              .append(ContactCodec.encode(f.displayName())).append(",")
               .append(isOnline ? "ONLINE" : "OFFLINE");
         }
-        sendPacket(new Packet(Packet.Type.FRIEND_LIST, "SERVER", sb.toString()));
+        Packet friendPacket = new Packet(Packet.Type.FRIEND_LIST, "SERVER", sb.toString());
+        friendPacket.setExtra(ContactCodec.FORMAT);
+        sendPacket(friendPacket);
     }
 
     public void sendPendingFriendRequests() {
@@ -673,7 +692,7 @@ public class ClientHandler implements Runnable {
             handleOldPrivateMessage(command);
         } else {
             Packet p = new Packet(Packet.Type.MESSAGE, username, command);
-            roomManager.broadcastToRoom(currentRoom, p.toRawString());
+            handleMessagePacket(p);
         }
     }
 
@@ -707,13 +726,14 @@ public class ClientHandler implements Runnable {
     }
 
     private void createAndJoinRoom(String roomName) {
-        if (roomName == null || roomName.trim().isEmpty()) {
+        if (roomName == null || !roomName.trim().matches("[\\p{L}\\p{N} _.-]{1,64}")) {
             sendPacket(new Packet(Packet.Type.ERROR, "SERVER", "Tên nhóm không hợp lệ."));
             return;
         }
         roomName = roomName.trim();
+        if (roomManager.roomExists(roomName)) { error("Tên nhóm đã tồn tại."); return; }
+        if (!databaseManager.createChatGroup(roomName, username)) { error("Không lưu được nhóm mới."); return; }
         roomManager.createRoom(roomName);
-        databaseManager.createChatGroup(roomName, username);
         broadcastRoomList();
         joinRoom(roomName);
     }
@@ -725,7 +745,7 @@ public class ClientHandler implements Runnable {
     }
 
     private void joinRoom(String roomName) {
-        if (roomName == null || roomName.trim().isEmpty()) {
+        if (roomName == null || !roomName.trim().matches("[\\p{L}\\p{N} _.-]{1,64}")) {
             sendPacket(new Packet(Packet.Type.ERROR, "SERVER", "Tên phòng không hợp lệ."));
             return;
         }
@@ -734,12 +754,15 @@ public class ClientHandler implements Runnable {
             sendPacket(new Packet(Packet.Type.ERROR, "SERVER", "Phòng '" + roomName + "' không tồn tại."));
             return;
         }
+        roomName = roomManager.canonicalName(roomName);
         if (currentRoom.equalsIgnoreCase(roomName)) {
-            sendPacket(new Packet(Packet.Type.SYSTEM, "SERVER", "Bạn đang ở phòng " + roomName));
+            sendPacket(new Packet(Packet.Type.JOIN_ROOM, "SERVER", roomName));
             return;
         }
 
-        databaseManager.addGroupMember(roomName, username, "MEMBER");
+        if (!databaseManager.isGroupMember(roomName, username) && !databaseManager.addGroupMember(roomName, username, "MEMBER")) {
+            error("Không lưu được quyền thành viên phòng."); return;
+        }
 
         String oldRoom = currentRoom;
         if (!roomManager.joinRoom(roomName, this)) {
@@ -748,6 +771,7 @@ public class ClientHandler implements Runnable {
         }
 
         currentRoom = roomName;
+        sendPacket(new Packet(Packet.Type.JOIN_ROOM, "SERVER", roomName));
         String time = getTimestamp();
         clientManager.logMessage(time + " [ROOM] " + username + " chuyển từ " + oldRoom + " -> " + roomName);
         sendPacket(new Packet(Packet.Type.SYSTEM, "SERVER", time + " Bạn đã vào phòng " + roomName));
@@ -762,6 +786,7 @@ public class ClientHandler implements Runnable {
         String oldRoom = currentRoom;
         roomManager.joinRoom("General", this);
         currentRoom = "General";
+        sendPacket(new Packet(Packet.Type.JOIN_ROOM, "SERVER", "General"));
 
         String time = getTimestamp();
         clientManager.logMessage(time + " [ROOM] " + username + " rời phòng " + oldRoom + " -> General");
@@ -787,6 +812,10 @@ public class ClientHandler implements Runnable {
 
     public long getLastHeartbeatTime() {
         return lastHeartbeatTime;
+    }
+
+    boolean awaitTermination(long timeoutNanos) throws InterruptedException {
+        return finished.await(Math.max(0, timeoutNanos), TimeUnit.NANOSECONDS);
     }
 
     private String getTimestamp() {
@@ -833,15 +862,17 @@ public class ClientHandler implements Runnable {
             clientManager.logMessage(leaveMsg);
             roomManager.broadcastToRoom(currentRoom, leaveMsg);
             roomManager.removeClient(this);
-            clientManager.removeClient(this);
             registered = false;
 
             databaseManager.updateUserStatus(username, "OFFLINE");
+            clientManager.removeClient(this);
             notifyFriendsStatusChange("OFFLINE");
             broadcastUserList();
         }
 
         try {
+            // Close the socket first to unblock any thread waiting in readLine().
+            if (socket != null && !socket.isClosed()) socket.close();
             synchronized (writeLock) {
                 if (writer != null) writer.close();
             }

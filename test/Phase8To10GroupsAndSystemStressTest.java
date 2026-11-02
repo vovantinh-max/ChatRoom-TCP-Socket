@@ -122,13 +122,13 @@ public class Phase8To10GroupsAndSystemStressTest {
         ChatClient cB = new ChatClient();
         ChatClient cC = new ChatClient();
 
-        cA.register("127.0.0.1", 5000, uA, "Pass123!", "Alice");
-        cB.register("127.0.0.1", 5000, uB, "Pass123!", "Bob");
-        cC.register("127.0.0.1", 5000, uC, "Pass123!", "Charlie");
+        cA.register("127.0.0.1", TestSupport.PORT, uA, "Pass123!", "Alice");
+        cB.register("127.0.0.1", TestSupport.PORT, uB, "Pass123!", "Bob");
+        cC.register("127.0.0.1", TestSupport.PORT, uC, "Pass123!", "Charlie");
 
-        cA.connect("127.0.0.1", 5000, uA, "Pass123!");
-        cB.connect("127.0.0.1", 5000, uB, "Pass123!");
-        cC.connect("127.0.0.1", 5000, uC, "Pass123!");
+        cA.connect("127.0.0.1", TestSupport.PORT, uA, "Pass123!");
+        cB.connect("127.0.0.1", TestSupport.PORT, uB, "Pass123!");
+        cC.connect("127.0.0.1", TestSupport.PORT, uC, "Pass123!");
 
         // Alice và Bob vào phòng 'Java', Charlie ở phòng 'General'
         cA.sendJoinRoom("Java");
@@ -198,7 +198,7 @@ public class Phase8To10GroupsAndSystemStressTest {
         for (int i = 0; i < clientCount; i++) {
             String uname = "stress_user_" + testId + "_" + i;
             ChatClient client = new ChatClient();
-            client.register("127.0.0.1", 5000, uname, "Pass123!", "StressUser" + i);
+            client.register("127.0.0.1", TestSupport.PORT, uname, "Pass123!", "StressUser" + i);
 
             client.setEventListener(new ChatClient.ChatEventListener() {
                 @Override public void onMessageReceived(String sender, String message) {
@@ -224,7 +224,7 @@ public class Phase8To10GroupsAndSystemStressTest {
                 final String uname = "stress_user_" + testId + "_" + idx;
                 executor.submit(() -> {
                     try {
-                        c.connect("127.0.0.1", 5000, uname, "Pass123!");
+                        c.connect("127.0.0.1", TestSupport.PORT, uname, "Pass123!");
                         connectLatch.countDown();
                     } catch (Exception e) {
                         e.printStackTrace();

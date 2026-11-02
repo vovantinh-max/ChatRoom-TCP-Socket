@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class DatabaseManager {
 
     private static final String DB_DIR = "data";
-    private static final String DB_URL = "jdbc:sqlite:" + DB_DIR + "/messenger.db";
+    private static final String DB_PATH = System.getProperty("chat.db.path", DB_DIR + "/messenger.db");
+    private static final String DB_URL = "jdbc:sqlite:" + DB_PATH;
 
     private static final int HASH_ITERATIONS = 65536;
     private static final int KEY_LENGTH = 256;
@@ -58,13 +59,12 @@ public class DatabaseManager {
     private final Map<String, Set<String>> inMemGroups = new ConcurrentHashMap<>();
     private final Map<String, String> inMemGroupOwners = new ConcurrentHashMap<>();
 
-    public boolean isUsingMemoryFallback() {
-        if (useMemoryFallback || connection == null) return true;
-        try {
-            return connection.isClosed();
-        } catch (SQLException e) {
-            return true;
-        }
+    public boolean isUsingMemoryFallback() { return useMemoryFallback; }
+
+    public boolean isAvailable() {
+        if (useMemoryFallback) return true;
+        try { return connection != null && !connection.isClosed(); }
+        catch (SQLException e) { return false; }
     }
 
     public record UserRecord(
@@ -105,7 +105,7 @@ public class DatabaseManager {
 
     private void initDatabase() {
         try {
-            File dir = new File(DB_DIR);
+            File dir = new File(DB_PATH).getAbsoluteFile().getParentFile();
             if (!dir.exists()) {
                 dir.mkdirs();
             }
@@ -123,10 +123,41 @@ public class DatabaseManager {
 
             createTables();
             useMemoryFallback = false;
-        } catch (Throwable e) {
-            System.err.println("[DatabaseManager] Lưu ý: " + e.getMessage() + ". Tự động kích hoạt In-Memory Mode an toàn.");
+        } catch (Exception | LinkageError e) {
+            try { if (connection != null) connection.close(); } catch (SQLException ignored) {}
+            connection = null;
+            if (!Boolean.getBoolean("chat.db.allowMemoryFallback")) {
+                throw new IllegalStateException("Không mở được SQLite. Kiểm tra thư viện lib và quyền ghi thư mục data; dữ liệu chưa được chuyển sang bộ nhớ tạm.", e);
+            }
+            System.err.println("[DatabaseManager] Explicit in-memory demo mode: data will not survive restart.");
             useMemoryFallback = true;
         }
+    }
+
+    public enum MessageWriteResult { CREATED, DUPLICATE, CONFLICT, FAILED }
+
+    public MessageWriteResult persistMessage(String uuid, String type, String target, String sender,
+            String recipient, String content, String replyToId, long timestamp) {
+        synchronized (dbLock) {
+            if (!isAvailable()) return MessageWriteResult.FAILED;
+            MessageRecord existing = getMessage(uuid);
+            if (existing != null) {
+                boolean same = existing.sender().equalsIgnoreCase(sender) && existing.convType().equals(type)
+                        && existing.convTarget().equalsIgnoreCase(target) && existing.content().equals(content)
+                        && Objects.equals(emptyToNull(existing.recipient()), emptyToNull(recipient))
+                        && Objects.equals(emptyToNull(existing.replyToId()), emptyToNull(replyToId));
+                return same ? MessageWriteResult.DUPLICATE : MessageWriteResult.CONFLICT;
+            }
+            return saveMessage(uuid, type, target, sender, recipient, content, replyToId, timestamp)
+                    ? MessageWriteResult.CREATED : MessageWriteResult.FAILED;
+        }
+    }
+
+    private static String emptyToNull(String value) { return value == null || value.isEmpty() ? null : value; }
+
+    public boolean isGroupMember(String group, String user) {
+        if (group == null || user == null) return false;
+        return getGroupMembers(group).stream().anyMatch(member -> member.equalsIgnoreCase(user));
     }
 
     private void createTables() throws SQLException {
@@ -273,10 +304,8 @@ public class DatabaseManager {
         long now = System.currentTimeMillis();
 
         if (isUsingMemoryFallback()) {
-            String key = username.toLowerCase();
-            if (inMemUsers.containsKey(key)) return false;
-            inMemUsers.put(key, new InMemUser(inMemUserIdCounter.getAndIncrement(), username, hash, salt, displayName, "OFFLINE", now));
-            return true;
+            String key = username.toLowerCase(Locale.ROOT);
+            return inMemUsers.putIfAbsent(key, new InMemUser(inMemUserIdCounter.getAndIncrement(), username, hash, salt, displayName, "OFFLINE", now)) == null;
         }
 
         String sql = "INSERT INTO users (username, password_hash, salt, display_name, avatar_color, status, created_at, last_seen) VALUES (?, ?, ?, ?, ?, 'OFFLINE', ?, ?)";
@@ -303,7 +332,7 @@ public class DatabaseManager {
         username = username.trim();
 
         if (isUsingMemoryFallback()) {
-            InMemUser u = inMemUsers.get(username.toLowerCase());
+            InMemUser u = inMemUsers.get(username.toLowerCase(Locale.ROOT));
             if (u != null && verifyPassword(password, u.salt, u.passwordHash)) {
                 return new UserRecord(u.id, u.username, u.displayName, null, u.status, u.lastSeen);
             }
@@ -341,7 +370,7 @@ public class DatabaseManager {
     public boolean userExists(String username) {
         if (username == null) return false;
         if (isUsingMemoryFallback()) {
-            return inMemUsers.containsKey(username.trim().toLowerCase());
+            return inMemUsers.containsKey(username.trim().toLowerCase(Locale.ROOT));
         }
 
         String sql = "SELECT 1 FROM users WHERE username = ?";
@@ -360,7 +389,7 @@ public class DatabaseManager {
     public UserRecord getUser(String username) {
         if (username == null) return null;
         if (isUsingMemoryFallback()) {
-            InMemUser u = inMemUsers.get(username.trim().toLowerCase());
+            InMemUser u = inMemUsers.get(username.trim().toLowerCase(Locale.ROOT));
             return u != null ? new UserRecord(u.id, u.username, u.displayName, null, u.status, u.lastSeen) : null;
         }
 
@@ -390,7 +419,7 @@ public class DatabaseManager {
     public void updateUserStatus(String username, String status) {
         if (username == null) return;
         if (isUsingMemoryFallback()) {
-            InMemUser u = inMemUsers.get(username.trim().toLowerCase());
+            InMemUser u = inMemUsers.get(username.trim().toLowerCase(Locale.ROOT));
             if (u != null) {
                 u.status = status;
                 u.lastSeen = System.currentTimeMillis();
@@ -414,12 +443,12 @@ public class DatabaseManager {
     public List<UserRecord> searchUsers(String query, String excludeUsername) {
         List<UserRecord> results = new ArrayList<>();
         if (query == null || query.trim().isEmpty()) return results;
-        String q = query.trim().toLowerCase();
+        String q = query.trim().toLowerCase(Locale.ROOT);
 
         if (isUsingMemoryFallback()) {
             for (InMemUser u : inMemUsers.values()) {
                 if (excludeUsername != null && excludeUsername.equalsIgnoreCase(u.username)) continue;
-                if (u.username.toLowerCase().contains(q) || u.displayName.toLowerCase().contains(q)) {
+                if (u.username.toLowerCase(Locale.ROOT).contains(q) || u.displayName.toLowerCase(Locale.ROOT).contains(q)) {
                     results.add(new UserRecord(u.id, u.username, u.displayName, null, u.status, u.lastSeen));
                     if (results.size() >= 20) break;
                 }
@@ -454,7 +483,38 @@ public class DatabaseManager {
     }
 
     // ─── HỆ THỐNG BẠN BÈ (MODULE 2) ─────────────────────────────────────────────
+    public String getFriendRelationship(String viewer, String target) {
+        synchronized (dbLock) {
+            if (isFriend(viewer, target)) return "FRIEND";
+            if (hasPendingFriendRequest(viewer, target)) return "OUTGOING";
+            if (hasPendingFriendRequest(target, viewer)) return "INCOMING";
+            return "STRANGER";
+        }
+    }
+
+    private boolean hasPendingFriendRequest(String senderName, String receiverName) {
+        if (senderName == null || receiverName == null) return false;
+        if (isUsingMemoryFallback()) {
+            return inMemFriendRequests.contains(senderName.toLowerCase(Locale.ROOT) + "->" + receiverName.toLowerCase(Locale.ROOT));
+        }
+        UserRecord sender = getUser(senderName);
+        UserRecord receiver = getUser(receiverName);
+        if (sender == null || receiver == null) return false;
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT 1 FROM friend_requests WHERE sender_id = ? AND receiver_id = ? AND status = 'PENDING'")) {
+            query.setInt(1, sender.id());
+            query.setInt(2, receiver.id());
+            try (ResultSet result = query.executeQuery()) { return result.next(); }
+        } catch (SQLException e) { return false; }
+    }
+
     public boolean sendFriendRequest(String senderUsername, String receiverUsername) {
+        synchronized (dbLock) {
+            return sendFriendRequestLocked(senderUsername, receiverUsername);
+        }
+    }
+
+    private boolean sendFriendRequestLocked(String senderUsername, String receiverUsername) {
         if (senderUsername == null || receiverUsername == null) return false;
         senderUsername = senderUsername.trim();
         receiverUsername = receiverUsername.trim();
@@ -463,20 +523,19 @@ public class DatabaseManager {
         UserRecord sender = getUser(senderUsername);
         UserRecord receiver = getUser(receiverUsername);
         if (sender == null || receiver == null) return false;
-        if (isFriend(senderUsername, receiverUsername)) return false;
+        if (!"STRANGER".equals(getFriendRelationship(senderUsername, receiverUsername))) return false;
 
         if (isUsingMemoryFallback()) {
-            return inMemFriendRequests.add(senderUsername.toLowerCase() + "->" + receiverUsername.toLowerCase());
+            return inMemFriendRequests.add(senderUsername.toLowerCase(Locale.ROOT) + "->" + receiverUsername.toLowerCase(Locale.ROOT));
         }
 
-        String sql = "INSERT OR REPLACE INTO friend_requests (sender_id, receiver_id, status, created_at) VALUES (?, ?, 'PENDING', ?)";
+        String sql = "INSERT OR IGNORE INTO friend_requests (sender_id, receiver_id, status, created_at) VALUES (?, ?, 'PENDING', ?)";
         synchronized (dbLock) {
             try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
                 pstmt.setInt(1, sender.id());
                 pstmt.setInt(2, receiver.id());
                 pstmt.setLong(3, System.currentTimeMillis());
-                pstmt.executeUpdate();
-                return true;
+                return pstmt.executeUpdate() == 1;
             } catch (SQLException e) {
                 e.printStackTrace();
                 return false;
@@ -485,12 +544,19 @@ public class DatabaseManager {
     }
 
     public boolean acceptFriendRequest(String receiverUsername, String senderUsername) {
+        synchronized (dbLock) {
+            return acceptFriendRequestLocked(receiverUsername, senderUsername);
+        }
+    }
+
+    private boolean acceptFriendRequestLocked(String receiverUsername, String senderUsername) {
+        if (!hasPendingFriendRequest(senderUsername, receiverUsername)) return false;
         UserRecord receiver = getUser(receiverUsername);
         UserRecord sender = getUser(senderUsername);
         if (receiver == null || sender == null) return false;
 
         if (isUsingMemoryFallback()) {
-            inMemFriendRequests.remove(senderUsername.toLowerCase() + "->" + receiverUsername.toLowerCase());
+            inMemFriendRequests.remove(senderUsername.toLowerCase(Locale.ROOT) + "->" + receiverUsername.toLowerCase(Locale.ROOT));
             inMemFriendships.add(getPrivateConversationTarget(receiverUsername, senderUsername));
             return true;
         }
@@ -498,13 +564,15 @@ public class DatabaseManager {
         synchronized (dbLock) {
             try {
                 connection.setAutoCommit(false);
-                String delReq = "DELETE FROM friend_requests WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)";
+                String delReq = "DELETE FROM friend_requests WHERE sender_id = ? AND receiver_id = ? AND status = 'PENDING'";
                 try (PreparedStatement p = connection.prepareStatement(delReq)) {
                     p.setInt(1, sender.id());
                     p.setInt(2, receiver.id());
-                    p.setInt(3, receiver.id());
-                    p.setInt(4, sender.id());
-                    p.executeUpdate();
+                    if (p.executeUpdate() != 1) {
+                        connection.rollback();
+                        connection.setAutoCommit(true);
+                        return false;
+                    }
                 }
 
                 int u1 = Math.min(sender.id(), receiver.id());
@@ -529,12 +597,18 @@ public class DatabaseManager {
     }
 
     public boolean rejectFriendRequest(String receiverUsername, String senderUsername) {
+        synchronized (dbLock) {
+            return rejectFriendRequestLocked(receiverUsername, senderUsername);
+        }
+    }
+
+    private boolean rejectFriendRequestLocked(String receiverUsername, String senderUsername) {
         UserRecord receiver = getUser(receiverUsername);
         UserRecord sender = getUser(senderUsername);
         if (receiver == null || sender == null) return false;
 
         if (isUsingMemoryFallback()) {
-            return inMemFriendRequests.remove(senderUsername.toLowerCase() + "->" + receiverUsername.toLowerCase());
+            return inMemFriendRequests.remove(senderUsername.toLowerCase(Locale.ROOT) + "->" + receiverUsername.toLowerCase(Locale.ROOT));
         }
 
         String sql = "DELETE FROM friend_requests WHERE sender_id = ? AND receiver_id = ?";
@@ -605,13 +679,13 @@ public class DatabaseManager {
         if (user == null) return friends;
 
         if (isUsingMemoryFallback()) {
-            String uLower = username.toLowerCase();
+            String uLower = username.toLowerCase(Locale.ROOT);
             for (String pair : inMemFriendships) {
                 String[] parts = pair.split(":");
                 if (parts.length == 2) {
                     String friendUser = parts[0].equalsIgnoreCase(uLower) ? parts[1] : (parts[1].equalsIgnoreCase(uLower) ? parts[0] : null);
                     if (friendUser != null) {
-                        InMemUser fu = inMemUsers.get(friendUser.toLowerCase());
+                        InMemUser fu = inMemUsers.get(friendUser.toLowerCase(Locale.ROOT));
                         String dName = fu != null ? fu.displayName : friendUser;
                         String st = fu != null ? fu.status : "OFFLINE";
                         friends.add(new FriendRecord(friendUser, dName, null, st, "ONLINE".equalsIgnoreCase(st)));
@@ -660,7 +734,7 @@ public class DatabaseManager {
         if (receiver == null) return list;
 
         if (isUsingMemoryFallback()) {
-            String suffix = "->" + receiverUsername.toLowerCase();
+            String suffix = "->" + receiverUsername.toLowerCase(Locale.ROOT);
             for (String req : inMemFriendRequests) {
                 if (req.endsWith(suffix)) {
                     list.add(req.substring(0, req.indexOf("->")));
@@ -694,8 +768,8 @@ public class DatabaseManager {
     // ─── NHẮN TIN THỜI GIAN THỰC & LỊCH SỬ TIN NHẮN (MODULE 3) ──────────────────
     public static String getPrivateConversationTarget(String user1, String user2) {
         if (user1 == null || user2 == null) return "";
-        user1 = user1.trim().toLowerCase();
-        user2 = user2.trim().toLowerCase();
+        user1 = user1.trim().toLowerCase(Locale.ROOT);
+        user2 = user2.trim().toLowerCase(Locale.ROOT);
         return user1.compareTo(user2) < 0 ? user1 + ":" + user2 : user2 + ":" + user1;
     }
 
@@ -745,9 +819,12 @@ public class DatabaseManager {
                     }
                 }
             }
-            int from = Math.min(offset, list.size());
+            list.sort(Comparator.comparingLong(MessageRecord::timestamp).reversed().thenComparing(MessageRecord::uuid));
+            int from = Math.min(Math.max(0, offset), list.size());
             int to = Math.min(from + max, list.size());
-            return new ArrayList<>(list.subList(from, to));
+            List<MessageRecord> page = new ArrayList<>(list.subList(from, to));
+            Collections.reverse(page);
+            return page;
         }
 
         int off = Math.max(0, offset);
@@ -755,7 +832,7 @@ public class DatabaseManager {
             SELECT uuid, conv_type, conv_target, sender, recipient, content, reply_to_id, is_edited, is_revoked, reactions, status, timestamp
             FROM chat_messages
             WHERE conv_type = ? AND conv_target = ?
-            ORDER BY timestamp ASC
+            ORDER BY timestamp DESC, uuid ASC
             LIMIT ? OFFSET ?
         """;
 
@@ -787,6 +864,7 @@ public class DatabaseManager {
                 e.printStackTrace();
             }
         }
+        Collections.reverse(list);
         return list;
     }
 
@@ -886,6 +964,10 @@ public class DatabaseManager {
     }
 
     public String toggleReaction(String uuid, String username, String emoji) {
+        synchronized (dbLock) { return toggleReactionLocked(uuid, username, emoji); }
+    }
+
+    private String toggleReactionLocked(String uuid, String username, String emoji) {
         MessageRecord msg = getMessage(uuid);
         if (msg == null || username == null || emoji == null) return "";
 
@@ -961,7 +1043,7 @@ public class DatabaseManager {
         if (groupName.isEmpty() || owner.isEmpty()) return false;
 
         if (isUsingMemoryFallback()) {
-            String key = groupName.toLowerCase();
+            String key = groupName.toLowerCase(Locale.ROOT);
             if (inMemGroups.containsKey(key)) return false;
             inMemGroupOwners.put(key, owner);
             Set<String> set = ConcurrentHashMap.newKeySet();
@@ -1004,7 +1086,7 @@ public class DatabaseManager {
     public boolean addGroupMember(String groupName, String username, String role) {
         if (groupName == null || username == null) return false;
         if (isUsingMemoryFallback()) {
-            Set<String> set = inMemGroups.computeIfAbsent(groupName.trim().toLowerCase(), k -> ConcurrentHashMap.newKeySet());
+            Set<String> set = inMemGroups.computeIfAbsent(groupName.trim().toLowerCase(Locale.ROOT), k -> ConcurrentHashMap.newKeySet());
             return set.add(username.trim());
         }
 
@@ -1025,7 +1107,7 @@ public class DatabaseManager {
     public boolean removeGroupMember(String groupName, String username) {
         if (groupName == null || username == null) return false;
         if (isUsingMemoryFallback()) {
-            Set<String> set = inMemGroups.get(groupName.trim().toLowerCase());
+            Set<String> set = inMemGroups.get(groupName.trim().toLowerCase(Locale.ROOT));
             return set != null && set.remove(username.trim());
         }
 
@@ -1045,7 +1127,7 @@ public class DatabaseManager {
         List<String> list = new ArrayList<>();
         if (groupName == null) return list;
         if (isUsingMemoryFallback()) {
-            Set<String> set = inMemGroups.get(groupName.trim().toLowerCase());
+            Set<String> set = inMemGroups.get(groupName.trim().toLowerCase(Locale.ROOT));
             return set != null ? new ArrayList<>(set) : list;
         }
 
@@ -1068,7 +1150,7 @@ public class DatabaseManager {
     public boolean isGroupAdmin(String groupName, String username) {
         if (groupName == null || username == null) return false;
         if (isUsingMemoryFallback()) {
-            String owner = inMemGroupOwners.get(groupName.trim().toLowerCase());
+            String owner = inMemGroupOwners.get(groupName.trim().toLowerCase(Locale.ROOT));
             return owner != null && owner.equalsIgnoreCase(username.trim());
         }
 

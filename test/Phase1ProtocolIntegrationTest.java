@@ -137,11 +137,13 @@ public class Phase1ProtocolIntegrationTest {
 
         try {
             // Client 1 kết nối
-            boolean c1 = client1.connect("127.0.0.1", 5000, "User_Alpha");
+            client1.register("127.0.0.1", TestSupport.PORT, "User_Alpha", "TestPass123!", "Alpha");
+            boolean c1 = client1.connect("127.0.0.1", TestSupport.PORT, "User_Alpha", "TestPass123!");
             assertTrue("Client 1 (User_Alpha) kết nối thành công", c1);
 
             // Client 2 kết nối
-            boolean c2 = client2.connect("127.0.0.1", 5000, "User_Beta");
+            client2.register("127.0.0.1", TestSupport.PORT, "User_Beta", "TestPass123!", "Beta");
+            boolean c2 = client2.connect("127.0.0.1", TestSupport.PORT, "User_Beta", "TestPass123!");
             assertTrue("Client 2 (User_Beta) kết nối thành công", c2);
 
             // Chờ server cập nhật

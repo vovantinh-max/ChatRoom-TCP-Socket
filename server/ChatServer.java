@@ -4,6 +4,7 @@ import server.db.DatabaseManager;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Set;
 import java.util.concurrent.*;
 import javax.swing.SwingUtilities;
 
@@ -14,7 +15,7 @@ import javax.swing.SwingUtilities;
  */
 public class ChatServer {
 
-    private static final int PORT = 5000;
+    private static final int PORT = Integer.getInteger("chat.port", 5000);
     private final ClientManager clientManager;
     private final RoomManager roomManager;
     private final DatabaseManager databaseManager;
@@ -25,6 +26,7 @@ public class ChatServer {
     private ServerGUI serverGUI;
 
     private ScheduledExecutorService watchdogExecutor;
+    private final Set<ClientHandler> connections = ConcurrentHashMap.newKeySet();
 
     public ChatServer(ClientManager clientManager, ServerGUI serverGUI, RoomManager roomManager, DatabaseManager databaseManager) {
         this.clientManager = clientManager;
@@ -37,17 +39,19 @@ public class ChatServer {
         this(clientManager, serverGUI, roomManager, new DatabaseManager());
     }
 
-    public boolean startServer() {
+    public synchronized boolean startServer() {
         if (running) {
             return false;
         }
         try {
+            if (!databaseManager.isAvailable()) throw new IOException("Cơ sở dữ liệu không sẵn sàng.");
             serverSocket = new ServerSocket(PORT);
             serverSocket.setReuseAddress(true);
             running = true;
 
             // Khởi động luồng chấp nhận kết nối bằng Virtual Thread
-            Thread.ofVirtual().name("ServerAcceptThread").start(this::acceptClients);
+            ServerSocket listener = serverSocket;
+            Thread.ofVirtual().name("ServerAcceptThread").start(() -> acceptClients(listener));
 
             // Khởi động Watchdog kiểm tra Heartbeat các kết nối chết
             startWatchdog();
@@ -62,6 +66,7 @@ public class ChatServer {
 
             return true;
         } catch (IOException e) {
+            clientManager.logMessage("Cannot start server on port " + PORT + ": " + e.getMessage());
             if (serverGUI != null) {
                 serverGUI.appendLog("Không thể khởi động Server: " + e.getMessage());
             }
@@ -69,19 +74,26 @@ public class ChatServer {
         }
     }
 
-    private void acceptClients() {
+    private void acceptClients(ServerSocket listener) {
         if (serverGUI != null) {
             serverGUI.appendLog("Server đang chờ Client kết nối (Virtual Threads + SQLite enabled)...");
         }
 
-        while (running) {
+        while (running && !listener.isClosed()) {
             try {
-                Socket clientSocket = serverSocket.accept();
+                Socket clientSocket = listener.accept();
                 if (serverGUI != null) {
                     serverGUI.appendLog("Client mới kết nối: " + clientSocket.getInetAddress().getHostAddress());
                 }
 
                 ClientHandler clientHandler = new ClientHandler(clientSocket, clientManager, roomManager, databaseManager, this);
+                synchronized (this) {
+                    if (!running || listener.isClosed()) {
+                        clientSocket.close();
+                        continue;
+                    }
+                    connections.add(clientHandler);
+                }
                 Thread.ofVirtual().name("ClientHandler-" + clientSocket.getPort()).start(clientHandler);
             } catch (IOException e) {
                 if (running && serverGUI != null) {
@@ -118,10 +130,14 @@ public class ChatServer {
         }
     }
 
-    public void stopServer() {
+    public synchronized void stopServer() {
         running = false;
         locked = false;
         stopWatchdog();
+        Set<ClientHandler> stopping = Set.copyOf(connections);
+        for (ClientHandler connection : stopping) {
+            connection.closeConnection();
+        }
 
         if (clientManager != null) {
             clientManager.disconnectAllClients();
@@ -135,6 +151,23 @@ public class ChatServer {
                 serverGUI.appendLog("Lỗi khi dừng Server: " + e.getMessage());
             }
         }
+        // Finish status updates before callers close the shared database.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        for (ClientHandler connection : stopping) {
+            try {
+                if (!connection.awaitTermination(deadline - System.nanoTime())) {
+                    clientManager.logMessage("Timed out waiting for connection cleanup");
+                    break;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
+    void onClientDisconnected(ClientHandler client) {
+        connections.remove(client);
     }
 
     public boolean isLocked() { return locked; }
@@ -151,6 +184,7 @@ public class ChatServer {
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
+            try {
             DatabaseManager databaseManager = new DatabaseManager();
             ClientManager clientManager = new ClientManager();
             RoomManager roomManager = new RoomManager();
@@ -159,6 +193,12 @@ public class ChatServer {
 
             ChatServer chatServer = new ChatServer(clientManager, serverGUI, roomManager, databaseManager);
             serverGUI.setChatServer(chatServer);
+            if (java.util.Arrays.asList(args).contains("--start")) {
+                serverGUI.startServer();
+            }
+            } catch (IllegalStateException e) {
+                javax.swing.JOptionPane.showMessageDialog(null, e.getMessage(), "Không mở được máy chủ", javax.swing.JOptionPane.ERROR_MESSAGE);
+            }
         });
     }
 }

@@ -64,6 +64,8 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         String sender;
         String content;
         boolean isMe;
+        boolean revoked;
+        MessageDeliveryView delivery;
         JLabel contentLabel;
         JPanel reactionsPanel;
         JPanel rootRow;
@@ -97,6 +99,9 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     private JButton    btnTabGroups;
     private JButton    btnTabMembers;
 
+    private JLabel conversationTitle;
+    private JLabel conversationDescription;
+    private JPanel emptyConversation;
     private JLabel            lblServerInfo;
     private JComboBox<String> cbRecipient;
     private JPanel            recipientStatusPanel;
@@ -114,21 +119,21 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     private Timer  toastFadeTimer;
 
     // Search dialog reference
-    private JDialog searchDialog;
-    private DefaultListModel<SearchUserItem> searchResultModel;
+    private FriendsDialog friendsDialog;
+    private boolean updatingRecipients;
 
     public ChatFrame(ChatClient client, LoginFrame loginFrame) {
         this.client     = client;
         this.loginFrame = loginFrame;
-        this.client.setEventListener(this);
         initUI();
+        this.client.setEventListener(this);
     }
 
     private void initUI() {
         setTitle("Messenger Desktop Pro  ·  " + client.getUsername());
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setSize(1100, 720);
-        setMinimumSize(new Dimension(880, 580));
+        setSize(1220, 820);
+        setMinimumSize(new Dimension(960, 660));
         setLocationRelativeTo(null);
         UIUtils.applyGlobalDefaults();
 
@@ -181,40 +186,43 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             }
         });
 
-        JLayeredPane layeredRoot = new JLayeredPane();
+        JLayeredPane layeredRoot = new JLayeredPane() {
+            @Override public void doLayout() {
+                for (Component child : getComponents()) {
+                    if (child == toastPanel) {
+                        int width = Math.min(420, getWidth() - 40);
+                        child.setBounds((getWidth() - width) / 2, getHeight() - 150, width, 48);
+                    } else child.setBounds(0, 0, getWidth(), getHeight());
+                }
+            }
+        };
         layeredRoot.setLayout(null);
 
         JPanel mainPanel = new JPanel(new BorderLayout());
         mainPanel.setBackground(UIUtils.COLOR_BG_DARK);
 
-        mainPanel.add(buildHeader(), BorderLayout.NORTH);
+        JPanel conversation = new JPanel(new BorderLayout());
+        conversation.setBackground(UIUtils.COLOR_BG_DARK);
+        conversation.add(buildHeader(), BorderLayout.NORTH);
 
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-        split.setResizeWeight(0.74);
+        split.setResizeWeight(0.0);
+        split.setDividerLocation(310);
         split.setContinuousLayout(true);
         split.setBorder(null);
         split.setDividerSize(1);
         split.setBackground(UIUtils.COLOR_BORDER);
 
-        split.setLeftComponent(buildChatArea());
-        split.setRightComponent(buildSidebar());
+        conversation.add(buildChatArea(), BorderLayout.CENTER);
+        conversation.add(buildInputBar(), BorderLayout.SOUTH);
+        split.setLeftComponent(buildSidebar());
+        split.setRightComponent(conversation);
         mainPanel.add(split, BorderLayout.CENTER);
 
-        mainPanel.add(buildInputBar(), BorderLayout.SOUTH);
+
 
         layeredRoot.add(mainPanel, JLayeredPane.DEFAULT_LAYER);
         mainPanel.setBounds(0, 0, 1100, 720);
-
-        layeredRoot.addComponentListener(new ComponentAdapter() {
-            @Override public void componentResized(ComponentEvent e) {
-                Dimension sz = layeredRoot.getSize();
-                mainPanel.setBounds(0, 0, sz.width, sz.height);
-                if (toastPanel != null) {
-                    int tw = 360, th = 48;
-                    toastPanel.setBounds((sz.width - tw) / 2, sz.height - th - 24, tw, th);
-                }
-            }
-        });
 
         toastPanel = buildToastPanel();
         toastPanel.setBounds((1100 - 360) / 2, 720 - 48 - 24, 360, 48);
@@ -222,101 +230,76 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         layeredRoot.add(toastPanel, JLayeredPane.POPUP_LAYER);
 
         setContentPane(layeredRoot);
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+                KeyStroke.getKeyStroke(KeyEvent.VK_K, InputEvent.CTRL_DOWN_MASK), "findPeople");
+        getRootPane().getActionMap().put("findPeople", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { showAddFriendDialog(); }
+        });
 
-        addSystemMessage("✓  Chào mừng @" + client.getUsername() + " tham gia Messenger Desktop Pro!");
+        showEmptyConversation();
         txtInput.requestFocusInWindow();
     }
 
     // ── Header ──────────────────────────────────────────────────────────────────
     private JPanel buildHeader() {
-        JPanel header = new JPanel(new BorderLayout(16, 0)) {
-            @Override protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(UIUtils.COLOR_SURFACE_1);
-                g2.fillRect(0, 0, getWidth(), getHeight());
-                g2.setColor(UIUtils.COLOR_BORDER);
-                g2.fillRect(0, getHeight() - 1, getWidth(), 1);
-                g2.dispose();
-            }
-        };
-        header.setOpaque(false);
-        header.setBorder(new EmptyBorder(10, 20, 10, 20));
-
-        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
-        left.setOpaque(false);
-
-        JPanel avatar = UIUtils.createAvatarPanel(client.getUsername(), 40);
-        left.add(avatar);
-
-        JPanel textCol = new JPanel();
-        textCol.setLayout(new BoxLayout(textCol, BoxLayout.Y_AXIS));
-        textCol.setOpaque(false);
-
-        JLabel lblName = new JLabel(client.getUsername());
-        lblName.setFont(UIUtils.FONT_HEADER);
-        lblName.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
-        textCol.add(lblName);
-
-        lblServerInfo = new JLabel("● Online  ·  Nhóm: #" + currentRoomName + "  ·  " +
-                client.getServerHost() + ":" + client.getServerPort());
-        lblServerInfo.setFont(UIUtils.FONT_TINY);
+        JPanel header = new JPanel(new BorderLayout(16, 0));
+        header.setBackground(UIUtils.COLOR_BG_DARK);
+        header.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, UIUtils.COLOR_BORDER),
+                new EmptyBorder(22, 28, 22, 28)));
+        JPanel titles = new JPanel();
+        titles.setOpaque(false);
+        titles.setLayout(new BoxLayout(titles, BoxLayout.Y_AXIS));
+        conversationTitle = new JLabel("# " + currentRoomName);
+        conversationTitle.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        conversationTitle.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
+        titles.add(conversationTitle);
+        titles.add(Box.createVerticalStrut(5));
+        conversationDescription = new JLabel("Phòng trò chuyện · Cùng chia sẻ và kết nối");
+        conversationDescription.setFont(UIUtils.FONT_SMALL);
+        conversationDescription.setForeground(UIUtils.COLOR_TEXT_SECONDARY);
+        titles.add(conversationDescription);
+        lblServerInfo = new JLabel("● Đã kết nối");
+        lblServerInfo.setToolTipText(client.getServerHost() + ":" + client.getServerPort());
+        lblServerInfo.setFont(UIUtils.FONT_SMALL);
         lblServerInfo.setForeground(UIUtils.COLOR_ONLINE);
-        textCol.add(lblServerInfo);
-
-        left.add(textCol);
-        header.add(left, BorderLayout.WEST);
-
-        // Right actions
-        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
-        right.setOpaque(false);
-
-        UIUtils.RoundedPanel roomBadge = new UIUtils.RoundedPanel(UIUtils.COLOR_PRIMARY_LIGHT, UIUtils.COLOR_BORDER, 8);
-        roomBadge.setLayout(new FlowLayout(FlowLayout.CENTER, 10, 4));
-        JLabel lblRoom = new JLabel("# " + currentRoomName);
-        lblRoom.setFont(UIUtils.FONT_BOLD);
-        lblRoom.setForeground(UIUtils.COLOR_PRIMARY);
-        roomBadge.add(lblRoom);
-        right.add(roomBadge);
-
-        btnVoiceCall = new UIUtils.ModernButton("📞 Thoại", new Color(30, 45, 60), UIUtils.COLOR_ONLINE, Color.WHITE);
-        btnVoiceCall.setCornerRadius(8);
-        btnVoiceCall.setPreferredSize(new Dimension(85, 32));
+        header.add(titles, BorderLayout.CENTER);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+        actions.setOpaque(false);
+        btnVoiceCall = new UIUtils.ModernButton("", UIUtils.COLOR_SURFACE_1, UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_TEXT_PRIMARY);
+        btnVoiceCall.setIcon(UIUtils.icon("phone", 21));
+        btnVoiceCall.setPreferredSize(new Dimension(42, 38));
+        btnVoiceCall.setToolTipText("Gọi thoại · Chọn một người để gọi");
+        btnVoiceCall.getAccessibleContext().setAccessibleName("Gọi thoại");
         btnVoiceCall.setEnabled(false);
         btnVoiceCall.addActionListener(e -> performStartVoiceCall());
-        right.add(btnVoiceCall);
-
-        btnVideoCall = new UIUtils.ModernButton("📹 Video", new Color(40, 30, 60), UIUtils.COLOR_ACCENT_VIOLET, Color.WHITE);
-        btnVideoCall.setCornerRadius(8);
-        btnVideoCall.setPreferredSize(new Dimension(85, 32));
+        btnVideoCall = new UIUtils.ModernButton("", UIUtils.COLOR_SURFACE_1, UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_TEXT_PRIMARY);
+        btnVideoCall.setIcon(UIUtils.icon("video", 21));
+        btnVideoCall.setPreferredSize(new Dimension(42, 38));
+        btnVideoCall.setToolTipText("Gọi video · Chọn một người để gọi");
+        btnVideoCall.getAccessibleContext().setAccessibleName("Gọi video");
         btnVideoCall.setEnabled(false);
         btnVideoCall.addActionListener(e -> performStartVideoCall());
-        right.add(btnVideoCall);
-
-        UIUtils.ModernButton btnLogout = new UIUtils.ModernButton(
-            "Đăng xuất",
-            new Color(60, 20, 20, 180),
-            UIUtils.COLOR_DANGER,
-            UIUtils.COLOR_ACCENT_ROSE
-        );
-        btnLogout.setCornerRadius(8);
-        btnLogout.setPreferredSize(new Dimension(95, 32));
-        btnLogout.addActionListener(e -> performLogout());
-        right.add(btnLogout);
-
-        header.add(right, BorderLayout.EAST);
+        actions.add(btnVoiceCall);
+        actions.add(btnVideoCall);
+        header.add(actions, BorderLayout.EAST);
         return header;
     }
 
     // ── Chat area ────────────────────────────────────────────────────────────────
     private JScrollPane buildChatArea() {
-        messagesBox = new JPanel();
+        messagesBox = new UIUtils.WidthTrackingPanel() {
+            @Override public boolean getScrollableTracksViewportHeight() { return false; }
+        };
         messagesBox.setLayout(new BoxLayout(messagesBox, BoxLayout.Y_AXIS));
         messagesBox.setBackground(UIUtils.COLOR_BG_DARK);
-        messagesBox.setBorder(new EmptyBorder(16, 20, 16, 20));
+        messagesBox.setBorder(new EmptyBorder(24, 28, 20, 28));
 
         chatScroll = new JScrollPane(messagesBox);
         chatScroll.setBorder(null);
+        chatScroll.getViewport().addComponentListener(new ComponentAdapter() {
+            @Override public void componentResized(ComponentEvent event) { reflowMessages(); }
+        });
         chatScroll.getVerticalScrollBar().setUnitIncrement(18);
         chatScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         chatScroll.setBackground(UIUtils.COLOR_BG_DARK);
@@ -334,21 +317,53 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             }
         };
         sidebar.setOpaque(false);
-        sidebar.setPreferredSize(new Dimension(285, 0));
+        sidebar.setPreferredSize(new Dimension(310, 0));
 
+        sidebar.setMinimumSize(new Dimension(288, 0));
+        JPanel sidebarTop = new JPanel();
+        sidebarTop.setLayout(new BoxLayout(sidebarTop, BoxLayout.Y_AXIS));
+        sidebarTop.setOpaque(false);
+        sidebarTop.setBorder(new EmptyBorder(26, 18, 14, 18));
+        JLabel brand = new JLabel("  messenger");
+        brand.setIcon(UIUtils.icon("chat", 25));
+        brand.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
+        brand.setFont(new Font("Segoe UI", Font.BOLD, 23));
+        brand.setAlignmentX(Component.LEFT_ALIGNMENT);
+        sidebarTop.add(brand);
+        sidebarTop.add(Box.createVerticalStrut(25));
+        UIUtils.ModernButton search = new UIUtils.ModernButton("Tìm người dùng", UIUtils.COLOR_SURFACE_2,
+                UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_TEXT_SECONDARY);
+        search.setIcon(UIUtils.icon("search", 17));
+        search.setIconTextGap(12);
+        search.setHorizontalAlignment(SwingConstants.LEFT);
+        search.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+        search.setAlignmentX(Component.LEFT_ALIGNMENT);
+        search.addActionListener(e -> showAddFriendDialog());
+        sidebarTop.add(search);
+        sidebarTop.add(Box.createVerticalStrut(24));
+        JLabel section = new JLabel("CUỘC TRÒ CHUYỆN");
+        section.setFont(UIUtils.FONT_SMALL);
+        section.setForeground(UIUtils.COLOR_TEXT_MUTED);
+        section.setAlignmentX(Component.LEFT_ALIGNMENT);
+        sidebarTop.add(section);
+        sidebarTop.add(Box.createVerticalStrut(12));
         // 3 Navigation Tabs: Bạn bè | Nhóm chat | Online
         JPanel tabBar = new JPanel(new GridLayout(1, 3, 4, 0));
         tabBar.setOpaque(false);
-        tabBar.setBorder(new EmptyBorder(10, 10, 10, 10));
+        tabBar.setBorder(new EmptyBorder(0, 0, 0, 0));
 
-        btnTabFriends = createSidebarTab("👥 Bạn bè", true);
-        btnTabGroups  = createSidebarTab("💬 Nhóm", false);
-        btnTabMembers = createSidebarTab("🌐 Online", false);
+        btnTabFriends = createSidebarTab("Bạn bè", false);
+        btnTabGroups  = createSidebarTab("Nhóm", true);
+        btnTabMembers = createSidebarTab("Online", false);
 
         tabBar.add(btnTabFriends);
         tabBar.add(btnTabGroups);
         tabBar.add(btnTabMembers);
-        sidebar.add(tabBar, BorderLayout.NORTH);
+        tabBar.setAlignmentX(Component.LEFT_ALIGNMENT);
+        tabBar.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+        tabBar.setPreferredSize(new Dimension(270, 36));
+        sidebarTop.add(tabBar);
+        sidebar.add(sidebarTop, BorderLayout.NORTH);
 
         // Card panels
         sidebarCardLayout = new CardLayout();
@@ -359,6 +374,27 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         sidebarCardPanel.add(buildGroupsPanel(),  "GROUPS");
         sidebarCardPanel.add(buildMembersPanel(), "MEMBERS");
         sidebar.add(sidebarCardPanel, BorderLayout.CENTER);
+        sidebarCardLayout.show(sidebarCardPanel, "GROUPS");
+        JPanel account = new JPanel(new BorderLayout(10, 12));
+        account.setOpaque(false);
+        account.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, UIUtils.COLOR_BORDER),
+                new EmptyBorder(18, 20, 20, 20)));
+        account.add(UIUtils.createAvatarPanel(client.getUsername(), 38), BorderLayout.WEST);
+        JPanel identity = new JPanel(new GridLayout(2, 1, 0, 3));
+        identity.setOpaque(false);
+        JLabel username = new JLabel(client.getUsername());
+        username.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
+        username.setFont(UIUtils.FONT_BOLD);
+        identity.add(username);
+        identity.add(lblServerInfo);
+        account.add(identity, BorderLayout.CENTER);
+        UIUtils.ModernButton logout = new UIUtils.ModernButton("Đăng xuất", UIUtils.COLOR_SURFACE_2,
+                UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_TEXT_SECONDARY);
+        logout.setFont(UIUtils.FONT_SMALL);
+        logout.addActionListener(e -> performLogout());
+        account.add(logout, BorderLayout.SOUTH);
+        sidebar.add(account, BorderLayout.SOUTH);
 
         btnTabFriends.addActionListener(e -> {
             activateSidebarTab(btnTabFriends, btnTabGroups, btnTabMembers);
@@ -378,8 +414,8 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
 
     private JButton createSidebarTab(String text, boolean active) {
-        JButton btn = new JButton(text);
-        btn.setFont(UIUtils.FONT_TINY);
+        JButton btn = new UIUtils.ModernButton(text, UIUtils.COLOR_SURFACE_2, UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_TEXT_SECONDARY);
+        btn.setFont(UIUtils.FONT_SMALL);
         btn.setFocusPainted(false);
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
         btn.setBorderPainted(false);
@@ -388,9 +424,13 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
 
     private void applyTabStyle(JButton btn, boolean active) {
+        if (btn instanceof UIUtils.ModernButton modern) {
+            modern.setColors(active ? UIUtils.COLOR_PRIMARY : UIUtils.COLOR_SURFACE_2,
+                    active ? UIUtils.COLOR_PRIMARY_HOVER : UIUtils.COLOR_SURFACE_3);
+        }
         if (active) {
             btn.setBackground(UIUtils.COLOR_PRIMARY);
-            btn.setForeground(Color.WHITE);
+            btn.setForeground(UIUtils.COLOR_BG_DARKEST);
             btn.setBorder(new EmptyBorder(6, 6, 6, 6));
         } else {
             btn.setBackground(UIUtils.COLOR_SURFACE_2);
@@ -414,8 +454,9 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         JPanel topActions = new JPanel(new GridLayout(1, 2, 6, 0));
         topActions.setOpaque(false);
         topActions.setBorder(new EmptyBorder(0, 10, 8, 10));
+        topActions.setPreferredSize(new Dimension(285, 46));
 
-        JButton btnAddFriend = new JButton("+ Thêm bạn");
+        JButton btnAddFriend = new UIUtils.ModernButton("+ Thêm bạn", UIUtils.COLOR_SURFACE_2, UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_PRIMARY);
         btnAddFriend.setFont(UIUtils.FONT_TINY);
         btnAddFriend.setForeground(UIUtils.COLOR_PRIMARY);
         btnAddFriend.setBackground(UIUtils.COLOR_SURFACE_2);
@@ -425,7 +466,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         btnAddFriend.addActionListener(e -> showAddFriendDialog());
         topActions.add(btnAddFriend);
 
-        btnRequestsBadge = new JButton("🔔 Lời mời (0)");
+        btnRequestsBadge = new UIUtils.ModernButton("Lời mời (0)", UIUtils.COLOR_SURFACE_2, UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_TEXT_SECONDARY);
         btnRequestsBadge.setFont(UIUtils.FONT_TINY);
         btnRequestsBadge.setForeground(UIUtils.COLOR_WARNING);
         btnRequestsBadge.setBackground(UIUtils.COLOR_SURFACE_2);
@@ -438,15 +479,17 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         panel.add(topActions, BorderLayout.NORTH);
 
         friendListModel = new DefaultListModel<>();
-        friendList = new JList<>(friendListModel);
+        friendList = new UIUtils.EmptyStateList<>(friendListModel, "Chưa có bạn bè", "Thêm bạn để bắt đầu trò chuyện.");
         friendList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         friendList.setCellRenderer(new FriendCellRenderer());
         friendList.setBackground(UIUtils.COLOR_BG_SIDEBAR);
         friendList.setBorder(new EmptyBorder(2, 6, 2, 6));
         friendList.addMouseListener(new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent e) {
+                int index = friendList.locationToIndex(e.getPoint());
+                if (index < 0 || !friendList.getCellBounds(index, index).contains(e.getPoint())) return;
                 FriendItem sel = friendList.getSelectedValue();
-                if (sel != null && e.getClickCount() >= 1) {
+                if (sel != null && SwingUtilities.isLeftMouseButton(e)) {
                     switchToPrivateChat(sel.username());
                 }
             }
@@ -519,7 +562,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
         UIUtils.ModernButton btnCreate = new UIUtils.ModernButton(
             "+ Tạo nhóm mới",
-            new Color(30, 35, 55),
+            UIUtils.COLOR_SURFACE_2,
             UIUtils.COLOR_SURFACE_3,
             UIUtils.COLOR_PRIMARY
         );
@@ -543,6 +586,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         groupListModel.addElement("Gaming");
 
         groupList = new JList<>(groupListModel);
+        groupList.setSelectedIndex(0);
         groupList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         groupList.setCellRenderer(new GroupCellRenderer());
         groupList.setBackground(UIUtils.COLOR_BG_SIDEBAR);
@@ -576,7 +620,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         };
         bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
         bar.setOpaque(false);
-        bar.setBorder(new EmptyBorder(8, 18, 12, 18));
+        bar.setBorder(new EmptyBorder(14, 24, 18, 24));
 
         JPanel recipRow = new JPanel(new BorderLayout(8, 0));
         recipRow.setOpaque(false);
@@ -585,19 +629,26 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         recipientStatusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         recipientStatusPanel.setOpaque(false);
 
-        lblCurrentRecipient = new JLabel("[Chung] Gửi tới: #" + currentRoomName);
+        lblCurrentRecipient = new JLabel("Gửi tới #" + currentRoomName);
         lblCurrentRecipient.setFont(UIUtils.FONT_BOLD);
         lblCurrentRecipient.setForeground(UIUtils.COLOR_PRIMARY);
         recipientStatusPanel.add(lblCurrentRecipient);
 
         cbRecipient = new JComboBox<>();
         cbRecipient.addItem(ALL_USERS);
+        cbRecipient.setUI(new javax.swing.plaf.basic.BasicComboBoxUI() {
+            @Override protected JButton createArrowButton() {
+                return new javax.swing.plaf.basic.BasicArrowButton(SwingConstants.SOUTH,
+                        UIUtils.COLOR_SURFACE_2, UIUtils.COLOR_SURFACE_2,
+                        UIUtils.COLOR_TEXT_SECONDARY, UIUtils.COLOR_SURFACE_2);
+            }
+        });
         cbRecipient.setFont(UIUtils.FONT_SMALL);
         cbRecipient.setPreferredSize(new Dimension(170, 26));
         cbRecipient.setBackground(UIUtils.COLOR_SURFACE_2);
         cbRecipient.setForeground(UIUtils.COLOR_TEXT_SECONDARY);
         cbRecipient.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
-        cbRecipient.addActionListener(e -> updateRecipientBadge());
+        cbRecipient.addActionListener(e -> { if (!updatingRecipients) updateRecipientBadge(); });
         recipientStatusPanel.add(cbRecipient);
 
         btnCancelPrivate = new JButton("✕ Hủy");
@@ -619,22 +670,31 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         // Emoji row
         JPanel emojiRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         emojiRow.setOpaque(false);
-        String[] emojis = {"😀", "😂", "❤️", "👍", "🔥", "🎉"};
-        for (String em : emojis) {
-            JButton eb = new JButton(em);
-            eb.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 14));
-            eb.setPreferredSize(new Dimension(32, 26));
-            eb.setMargin(new Insets(0, 0, 0, 0));
-            eb.setContentAreaFilled(false);
-            eb.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
-            eb.setCursor(new Cursor(Cursor.HAND_CURSOR));
-            eb.setFocusPainted(false);
-            eb.addActionListener(e -> {
-                txtInput.setText(txtInput.getText() + em);
+        JButton emojiPicker = new UIUtils.ModernButton("Biểu cảm", UIUtils.COLOR_SURFACE_2,
+                UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_TEXT_SECONDARY);
+        emojiPicker.setFont(UIUtils.FONT_SMALL);
+        emojiPicker.setPreferredSize(new Dimension(96, 28));
+        emojiPicker.setToolTipText("Chèn biểu cảm");
+        JPopupMenu emojiMenu = new JPopupMenu();
+        JPanel emojiGrid = new JPanel(new GridLayout(2, 3, 6, 6));
+        emojiGrid.setBorder(new EmptyBorder(10, 10, 10, 10));
+        emojiGrid.setBackground(UIUtils.COLOR_SURFACE_1);
+        for (String emoji : new String[]{"😀", "😂", "❤️", "👍", "🔥", "🎉"}) {
+            JButton choice = new JButton(emoji);
+            choice.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 22));
+            choice.setPreferredSize(new Dimension(46, 42));
+            choice.setBackground(UIUtils.COLOR_SURFACE_2);
+            choice.setFocusPainted(false);
+            choice.addActionListener(e -> {
+                txtInput.replaceSelection(emoji);
+                emojiMenu.setVisible(false);
                 txtInput.requestFocusInWindow();
             });
-            emojiRow.add(eb);
+            emojiGrid.add(choice);
         }
+        emojiMenu.add(emojiGrid);
+        emojiPicker.addActionListener(e -> emojiMenu.show(emojiPicker, -70, -125));
+        emojiRow.add(emojiPicker);
         recipRow.add(emojiRow, BorderLayout.EAST);
         bar.add(recipRow);
 
@@ -667,8 +727,9 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         JPanel inputRow = new JPanel(new BorderLayout(8, 0));
         inputRow.setOpaque(false);
 
-        JButton btnAttach = new JButton("📎");
-        btnAttach.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 18));
+        JButton btnAttach = new UIUtils.ModernButton("", UIUtils.COLOR_SURFACE_2, UIUtils.COLOR_SURFACE_3, UIUtils.COLOR_TEXT_PRIMARY);
+        btnAttach.setIcon(UIUtils.icon("attach", 22));
+        btnAttach.getAccessibleContext().setAccessibleName("Đính kèm file");
         btnAttach.setPreferredSize(new Dimension(42, 42));
         btnAttach.setBackground(UIUtils.COLOR_SURFACE_2);
         btnAttach.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
@@ -679,13 +740,17 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         btnAttach.addActionListener(e -> chooseAndSendFile());
         inputRow.add(btnAttach, BorderLayout.WEST);
 
-        txtInput = new UIUtils.ModernTextField("Nhập tin nhắn... (Enter để gửi)");
+        txtInput = new UIUtils.ModernTextField("Nhắn tin tới #General…");
         txtInput.setPreferredSize(new Dimension(0, 42));
         inputRow.add(txtInput, BorderLayout.CENTER);
 
-        btnSend = new UIUtils.ModernButton("Gửi ➤", UIUtils.COLOR_PRIMARY, UIUtils.COLOR_PRIMARY_HOVER, Color.WHITE);
+        btnSend = new UIUtils.ModernButton("Gửi", UIUtils.COLOR_PRIMARY, UIUtils.COLOR_PRIMARY_HOVER, Color.WHITE);
+        btnSend.setIcon(UIUtils.icon("send", 18));
+        btnSend.setIconTextGap(8);
+        btnSend.setForeground(UIUtils.COLOR_BG_DARKEST);
         btnSend.setCornerRadius(10);
         btnSend.setPreferredSize(new Dimension(95, 42));
+        btnSend.setEnabled(false);
         inputRow.add(btnSend, BorderLayout.EAST);
 
         bar.add(inputRow);
@@ -701,6 +766,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             @Override public void removeUpdate(DocumentEvent e) { onText(); }
             @Override public void changedUpdate(DocumentEvent e) { onText(); }
             private void onText() {
+                btnSend.setEnabled(!txtInput.getText().trim().isEmpty());
                 if (!isTypingNow && !txtInput.getText().trim().isEmpty()) {
                     isTypingNow = true;
                     sendTypingIndicator(true);
@@ -711,6 +777,8 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
         ActionListener sendAction = e -> performSendMessage();
         btnSend.addActionListener(sendAction);
+        txtInput.setToolTipText("Enter để gửi · Chuột phải vào tin nhắn để trả lời, sửa hoặc thu hồi");
+        txtInput.getAccessibleContext().setAccessibleName("Soạn tin nhắn");
         txtInput.addActionListener(sendAction);
 
         return bar;
@@ -773,180 +841,23 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
 
     // ── Dialog: Tìm kiếm & Kết bạn ──────────────────────────────────────────────
-    private void showAddFriendDialog() {
-        searchDialog = new JDialog(this, "Tìm kiếm người dùng & Kết bạn", true);
-        searchDialog.setSize(440, 360);
-        searchDialog.setLocationRelativeTo(this);
-        searchDialog.getContentPane().setBackground(UIUtils.COLOR_BG_DARK);
-
-        JPanel root = new JPanel(new BorderLayout(10, 10));
-        root.setOpaque(false);
-        root.setBorder(new EmptyBorder(16, 16, 16, 16));
-
-        // Top search bar
-        JPanel top = new JPanel(new BorderLayout(8, 0));
-        top.setOpaque(false);
-        UIUtils.ModernTextField txtSearch = new UIUtils.ModernTextField("Nhập username để tìm kiếm...");
-        JButton btnSearch = new JButton("Tìm");
-        btnSearch.setBackground(UIUtils.COLOR_PRIMARY);
-        btnSearch.setForeground(Color.WHITE);
-        btnSearch.setFont(UIUtils.FONT_BOLD);
-        btnSearch.setFocusPainted(false);
-        btnSearch.setCursor(new Cursor(Cursor.HAND_CURSOR));
-
-        top.add(txtSearch, BorderLayout.CENTER);
-        top.add(btnSearch, BorderLayout.EAST);
-        root.add(top, BorderLayout.NORTH);
-
-        searchResultModel = new DefaultListModel<>();
-        JList<SearchUserItem> resList = new JList<>(searchResultModel);
-        resList.setBackground(UIUtils.COLOR_SURFACE_1);
-        resList.setCellRenderer(new DefaultListCellRenderer() {
-            @Override
-            public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
-                SearchUserItem item = (SearchUserItem) value;
-                JPanel p = new JPanel(new BorderLayout(8, 0));
-                p.setOpaque(true);
-                p.setBackground(isSelected ? UIUtils.COLOR_SURFACE_2 : UIUtils.COLOR_SURFACE_1);
-                p.setBorder(new EmptyBorder(8, 10, 8, 10));
-
-                p.add(UIUtils.createAvatarPanel(item.username(), 28), BorderLayout.WEST);
-
-                JLabel l = new JLabel(item.displayName() + " (@" + item.username() + ")");
-                l.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
-                l.setFont(UIUtils.FONT_SMALL);
-                p.add(l, BorderLayout.CENTER);
-
-                JLabel tag = new JLabel("FRIEND".equals(item.relationship()) ? "✓ Bạn bè" : "+ Kết bạn");
-                tag.setForeground("FRIEND".equals(item.relationship()) ? UIUtils.COLOR_ONLINE : UIUtils.COLOR_PRIMARY);
-                tag.setFont(UIUtils.FONT_TINY);
-                p.add(tag, BorderLayout.EAST);
-                return p;
-            }
-        });
-
-        JScrollPane scroll = new JScrollPane(resList);
-        scroll.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
-        root.add(scroll, BorderLayout.CENTER);
-
-        JButton btnAdd = new JButton("Gửi lời mời kết bạn");
-        btnAdd.setBackground(UIUtils.COLOR_PRIMARY);
-        btnAdd.setForeground(Color.WHITE);
-        btnAdd.setFont(UIUtils.FONT_BOLD);
-        btnAdd.setFocusPainted(false);
-        btnAdd.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        btnAdd.addActionListener(e -> {
-            SearchUserItem sel = resList.getSelectedValue();
-            if (sel != null) {
-                client.sendFriendRequest(sel.username());
-                showToast("Đã gửi lời mời tới @" + sel.username(), UIUtils.COLOR_ONLINE);
-                searchDialog.dispose();
-            }
-        });
-        root.add(btnAdd, BorderLayout.SOUTH);
-
-        ActionListener doSearch = e -> {
-            String q = txtSearch.getText().trim();
-            if (!q.isEmpty()) {
-                client.searchUsers(q);
-            }
-        };
-        btnSearch.addActionListener(doSearch);
-        txtSearch.addActionListener(doSearch);
-
-        searchDialog.setContentPane(root);
-        searchDialog.setVisible(true);
-    }
-
-    // ── Dialog: Lời mời kết bạn đang chờ ──────────────────────────────────────
-    private void showPendingRequestsDialog() {
-        if (pendingRequests.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Không có lời mời kết bạn nào đang chờ.", "Thông báo", JOptionPane.INFORMATION_MESSAGE);
-            return;
+    private FriendsDialog friendsDialog() {
+        if (friendsDialog == null || !friendsDialog.isDisplayable()) {
+            friendsDialog = new FriendsDialog(this, client, this::switchToPrivateChat);
+            friendsDialog.receivePending(pendingRequests);
         }
-
-        JDialog dlg = new JDialog(this, "Lời mời kết bạn đang chờ", true);
-        dlg.setSize(400, 320);
-        dlg.setLocationRelativeTo(this);
-        dlg.getContentPane().setBackground(UIUtils.COLOR_BG_DARK);
-
-        JPanel root = new JPanel(new BorderLayout(10, 10));
-        root.setOpaque(false);
-        root.setBorder(new EmptyBorder(16, 16, 16, 16));
-
-        DefaultListModel<String> reqModel = new DefaultListModel<>();
-        for (String s : pendingRequests) reqModel.addElement(s);
-
-        JList<String> list = new JList<>(reqModel);
-        list.setBackground(UIUtils.COLOR_SURFACE_1);
-        list.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
-        list.setCellRenderer(new DefaultListCellRenderer() {
-            @Override public Component getListCellRendererComponent(JList<?> l, Object val, int i, boolean sel, boolean foc) {
-                String u = (String) val;
-                JPanel p = new JPanel(new BorderLayout(8, 0));
-                p.setOpaque(true);
-                p.setBackground(sel ? UIUtils.COLOR_SURFACE_2 : UIUtils.COLOR_SURFACE_1);
-                p.setBorder(new EmptyBorder(8, 10, 8, 10));
-                p.add(UIUtils.createAvatarPanel(u, 28), BorderLayout.WEST);
-                JLabel lbl = new JLabel("@" + u + " muốn kết bạn với bạn");
-                lbl.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
-                p.add(lbl, BorderLayout.CENTER);
-                return p;
-            }
-        });
-
-        JScrollPane scroll = new JScrollPane(list);
-        scroll.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
-        root.add(scroll, BorderLayout.CENTER);
-
-        JPanel btnRow = new JPanel(new GridLayout(1, 2, 8, 0));
-        btnRow.setOpaque(false);
-
-        JButton btnAccept = new JButton("✓ Đồng ý");
-        btnAccept.setBackground(UIUtils.COLOR_ONLINE);
-        btnAccept.setForeground(Color.WHITE);
-        btnAccept.setFont(UIUtils.FONT_BOLD);
-        btnAccept.setFocusPainted(false);
-        btnAccept.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        btnAccept.addActionListener(e -> {
-            String sel = list.getSelectedValue();
-            if (sel != null) {
-                client.acceptFriendRequest(sel);
-                pendingRequests.remove(sel);
-                reqModel.removeElement(sel);
-                updateRequestsBadge();
-                if (reqModel.isEmpty()) dlg.dispose();
-            }
-        });
-        btnRow.add(btnAccept);
-
-        JButton btnReject = new JButton("✕ Từ chối");
-        btnReject.setBackground(UIUtils.COLOR_SURFACE_3);
-        btnReject.setForeground(UIUtils.COLOR_DANGER);
-        btnReject.setFont(UIUtils.FONT_BOLD);
-        btnReject.setFocusPainted(false);
-        btnReject.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        btnReject.addActionListener(e -> {
-            String sel = list.getSelectedValue();
-            if (sel != null) {
-                client.rejectFriendRequest(sel);
-                pendingRequests.remove(sel);
-                reqModel.removeElement(sel);
-                updateRequestsBadge();
-                if (reqModel.isEmpty()) dlg.dispose();
-            }
-        });
-        btnRow.add(btnReject);
-
-        root.add(btnRow, BorderLayout.SOUTH);
-        dlg.setContentPane(root);
-        dlg.setVisible(true);
+        return friendsDialog;
     }
+
+    private void showAddFriendDialog() { friendsDialog().showPage(false); }
+
+    private void showPendingRequestsDialog() { friendsDialog().showPage(true); }
 
     private void updateRequestsBadge() {
         if (btnRequestsBadge != null) {
             int count = pendingRequests.size();
-            btnRequestsBadge.setText("🔔 Lời mời (" + count + ")");
+            btnRequestsBadge.setText("Lời mời (" + count + ")");
+            btnTabFriends.setText(count > 0 ? "Bạn bè (" + count + ")" : "Bạn bè");
             btnRequestsBadge.setForeground(count > 0 ? UIUtils.COLOR_ONLINE : UIUtils.COLOR_WARNING);
         }
     }
@@ -1041,43 +952,53 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         name = name.trim();
         if (name.isEmpty()) return;
         client.sendCreateRoom(name);
-        currentRoomName = name;
-        updateRoomHeader();
-        if (!groupListModel.contains(name)) groupListModel.addElement(name);
-        groupList.setSelectedValue(name, true);
-        showToast("Đã tạo nhóm: #" + name, UIUtils.COLOR_ONLINE);
     }
 
     private void performJoinSelectedGroup() {
         String selected = groupList.getSelectedValue();
         if (selected == null || selected.equalsIgnoreCase(currentRoomName)) return;
         client.sendJoinRoom(selected);
-        currentRoomName = selected;
-        updateRoomHeader();
-        groupList.repaint();
-        client.requestHistory("#" + currentRoomName, true);
-        showToast("Đã vào nhóm: #" + selected, UIUtils.COLOR_PRIMARY);
+    }
+
+    @Override public void onRoomChanged(String room) {
+        SwingUtilities.invokeLater(() -> {
+            currentRoomName = room;
+            updatingRecipients = true;
+            try { cbRecipient.setSelectedItem(ALL_USERS); }
+            finally { updatingRecipients = false; }
+            updateRoomHeader();
+            updateRecipientBadge();
+            groupList.setSelectedValue(room, true);
+        });
     }
 
     private void updateRoomHeader() {
-        if (lblServerInfo != null)
-            lblServerInfo.setText("● Online  ·  Nhóm: #" + currentRoomName + "  ·  " +
-                    client.getServerHost() + ":" + client.getServerPort());
+        updateConversationHeading();
         if (cbRecipient.getSelectedItem() == null || cbRecipient.getSelectedItem().equals(ALL_USERS))
-            lblCurrentRecipient.setText("[Chung] Gửi tới: #" + currentRoomName);
+            lblCurrentRecipient.setText("Gửi tới #" + currentRoomName);
+        groupList.repaint();
+    }
+
+    private void updateConversationHeading() {
+        String recipient = cbRecipient == null ? null : (String) cbRecipient.getSelectedItem();
+        boolean isPublic = recipient == null || recipient.equals(ALL_USERS);
+        conversationTitle.setText(isPublic ? "# " + currentRoomName : "@" + recipient);
+        conversationDescription.setText(isPublic ? "Phòng trò chuyện · Cùng chia sẻ và kết nối" : "Cuộc trò chuyện riêng");
+        if (txtInput != null) txtInput.setPlaceholder(isPublic ? "Nhắn tin tới #" + currentRoomName + "…" : "Nhắn tin cho @" + recipient + "…");
     }
 
     private void updateRecipientBadge() {
+        updateConversationHeading();
         String sel = (String) cbRecipient.getSelectedItem();
         if (sel == null || sel.equals(ALL_USERS)) {
-            lblCurrentRecipient.setText("[Chung] Gửi tới: #" + currentRoomName);
+            lblCurrentRecipient.setText("Gửi tới #" + currentRoomName);
             lblCurrentRecipient.setForeground(UIUtils.COLOR_PRIMARY);
             btnCancelPrivate.setVisible(false);
             if (btnVoiceCall != null) btnVoiceCall.setEnabled(false);
             if (btnVideoCall != null) btnVideoCall.setEnabled(false);
             client.requestHistory("#" + currentRoomName, true);
         } else {
-            lblCurrentRecipient.setText("[Riêng] Đang chat với: @" + sel);
+            lblCurrentRecipient.setText("Nhắn riêng với @" + sel);
             lblCurrentRecipient.setForeground(UIUtils.COLOR_PRIVATE_TEXT);
             btnCancelPrivate.setVisible(true);
             if (btnVoiceCall != null) btnVoiceCall.setEnabled(true);
@@ -1096,17 +1017,37 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     private void performSendMessage() {
         String message = txtInput.getText().trim();
         if (message.isEmpty()) return;
+        if (message.length() > shared.protocol.ProtocolLimits.MAX_MESSAGE_CHARS) {
+            showToast("Tin nhắn tối đa " + shared.protocol.ProtocolLimits.MAX_MESSAGE_CHARS + " ký tự.", UIUtils.COLOR_DANGER);
+            return;
+        }
         String recipient = (String) cbRecipient.getSelectedItem();
+        if (recipient == null || recipient.equals(ALL_USERS)) {
+            String command = message.toLowerCase(java.util.Locale.ROOT);
+            boolean handled = true;
+            if (command.equals("/rooms") || command.equals("rooms")) client.requestRoomList();
+            else if (command.startsWith("/join ")) client.sendJoinRoom(message.substring(6).trim());
+            else if (command.startsWith("/create ")) client.sendCreateRoom(message.substring(8).trim());
+            else if (command.equals("/leave")) client.sendPacket(new Packet(Packet.Type.LEAVE_ROOM, client.getUsername(), ""));
+            else handled = false;
+            if (handled) { txtInput.setText(""); return; }
+        }
         String replyTo = replyingToId;
         cancelReply();
 
         if (recipient == null || recipient.equals(ALL_USERS)) {
-            client.sendPublicMessage(message, replyTo);
+            String id = client.sendPublicMessage(message, replyTo, currentRoomName);
+            if (id == null) { showToast("Có quá nhiều tin chưa gửi. Vui lòng thử lại sau.", UIUtils.COLOR_DANGER); return; }
+            addPublicChatMessage(new ChatMessageItem(id, client.getUsername(), "#" + currentRoomName, message,
+                    replyTo, false, false, "", System.currentTimeMillis()));
         } else {
-            client.sendPrivateMessage(recipient, message, replyTo);
-            String fakeUuid = UUID.randomUUID().toString();
+            String messageId = client.sendPrivateMessage(recipient, message, replyTo);
+            if (messageId == null) {
+                showToast("Đã mất kết nối. Tin nhắn chưa được gửi.", UIUtils.COLOR_DANGER);
+                return;
+            }
             addPrivateChatMessage(new ChatMessageItem(
-                fakeUuid, client.getUsername(), recipient, message, replyTo, false, false, "", System.currentTimeMillis()
+                messageId, client.getUsername(), recipient, message, replyTo, false, false, "", System.currentTimeMillis()
             ), true);
         }
         txtInput.setText("");
@@ -1119,6 +1060,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             "Bạn có chắc chắn muốn đăng xuất?", "Xác nhận đăng xuất", JOptionPane.YES_NO_OPTION);
         if (confirm == JOptionPane.YES_OPTION) {
             client.logout();
+            if (friendsDialog != null) friendsDialog.dispose();
             this.dispose();
             if (loginFrame != null) loginFrame.setVisible(true);
             else System.exit(0);
@@ -1138,10 +1080,11 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         String sender = item.sender();
         String message = item.content();
         String uuid = item.uuid() != null && !item.uuid().isEmpty() ? item.uuid() : UUID.randomUUID().toString();
+        if (messageMap.containsKey(uuid)) return;
         boolean isMe = sender.equalsIgnoreCase(client.getUsername());
-        String time  = LocalTime.now().format(timeFormatter);
+        String time  = java.time.Instant.ofEpochMilli(item.timestamp()).atZone(java.time.ZoneId.systemDefault()).format(timeFormatter);
 
-        JPanel row = new JPanel(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 4));
+        JPanel row = new MessageRow(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 4));
         row.setOpaque(false);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 999));
 
@@ -1166,7 +1109,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         Color bdrColor = isMe ? null : UIUtils.COLOR_BORDER;
         UIUtils.RoundedPanel bubble = new UIUtils.RoundedPanel(bgColor, bdrColor, 16);
         bubble.setLayout(new BorderLayout(0, 4));
-        bubble.setBorder(new EmptyBorder(9, 14, 9, 14));
+        bubble.setBorder(new EmptyBorder(12, 16, 10, 16));
         bubble.setAlignmentX(isMe ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
 
         if (item.replyToId() != null && !item.replyToId().isEmpty()) {
@@ -1180,15 +1123,13 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             ? "<i style='color:#94A3B8;'>🚫 Tin nhắn đã bị thu hồi</i>"
             : escapeHtml(message) + (item.isEdited() ? " <i style='font-size:9px; color:#94A3B8;'>(đã sửa)</i>" : "");
 
-        JLabel msgLbl = new JLabel("<html><body style='max-width:380px; word-wrap:break-word;'>" + displayContent + "</body></html>");
+        JLabel msgLbl = new JLabel(messageHtml(displayContent));
         msgLbl.setFont(UIUtils.FONT_REGULAR);
         msgLbl.setForeground(isMe ? Color.WHITE : UIUtils.COLOR_TEXT_PRIMARY);
         bubble.add(msgLbl, BorderLayout.CENTER);
 
-        JLabel timeLbl = new JLabel(time, isMe ? SwingConstants.RIGHT : SwingConstants.LEFT);
-        timeLbl.setFont(UIUtils.FONT_TINY);
-        timeLbl.setForeground(isMe ? new Color(200, 210, 255, 160) : UIUtils.COLOR_TEXT_MUTED);
-        bubble.add(timeLbl, BorderLayout.SOUTH);
+        MessageDeliveryView delivery = new MessageDeliveryView(client, uuid, time, isMe);
+        bubble.add(delivery, BorderLayout.SOUTH);
 
         JPanel rxPanel = new JPanel(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 4, 0));
         rxPanel.setOpaque(false);
@@ -1204,6 +1145,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         holder.content = message;
         holder.isMe = isMe;
         holder.contentLabel = msgLbl;
+        holder.delivery = delivery;
         holder.reactionsPanel = rxPanel;
         holder.rootRow = row;
         messageMap.put(uuid, holder);
@@ -1223,9 +1165,10 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         String receiver = item.recipient();
         String message = item.content();
         String uuid = item.uuid() != null && !item.uuid().isEmpty() ? item.uuid() : UUID.randomUUID().toString();
-        String time = LocalTime.now().format(timeFormatter);
+        if (messageMap.containsKey(uuid)) return;
+        String time = java.time.Instant.ofEpochMilli(item.timestamp()).atZone(java.time.ZoneId.systemDefault()).format(timeFormatter);
 
-        JPanel row = new JPanel(new FlowLayout(isOutgoing ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 4));
+        JPanel row = new MessageRow(new FlowLayout(isOutgoing ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 4));
         row.setOpaque(false);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 999));
 
@@ -1239,9 +1182,9 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
         UIUtils.RoundedPanel bubble = new UIUtils.RoundedPanel(UIUtils.COLOR_PRIVATE_BG, UIUtils.COLOR_PRIVATE_BORDER, 16);
         bubble.setLayout(new BorderLayout(0, 4));
-        bubble.setBorder(new EmptyBorder(9, 14, 9, 14));
+        bubble.setBorder(new EmptyBorder(12, 16, 10, 16));
 
-        String hdr = isOutgoing ? "🔒 chat riêng → @" + receiver : "🔒 @" + sender + " nhắn riêng";
+        String hdr = isOutgoing ? "Gửi tới @" + receiver : "@" + sender;
         if (item.replyToId() != null && !item.replyToId().isEmpty()) {
             hdr += " · ↩️ Trả lời";
         }
@@ -1254,15 +1197,13 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             ? "<i style='color:#94A3B8;'>🚫 Tin nhắn đã bị thu hồi</i>"
             : escapeHtml(message) + (item.isEdited() ? " <i style='font-size:9px; color:#94A3B8;'>(đã sửa)</i>" : "");
 
-        JLabel msgLbl = new JLabel("<html><body style='max-width:360px; word-wrap:break-word;'>" + displayContent + "</body></html>");
+        JLabel msgLbl = new JLabel(messageHtml(displayContent));
         msgLbl.setFont(UIUtils.FONT_REGULAR);
         msgLbl.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
         bubble.add(msgLbl, BorderLayout.CENTER);
 
-        JLabel timeLbl = new JLabel(time, SwingConstants.RIGHT);
-        timeLbl.setFont(UIUtils.FONT_TINY);
-        timeLbl.setForeground(UIUtils.COLOR_TEXT_MUTED);
-        bubble.add(timeLbl, BorderLayout.SOUTH);
+        MessageDeliveryView delivery = new MessageDeliveryView(client, uuid, time, isOutgoing);
+        bubble.add(delivery, BorderLayout.SOUTH);
 
         JPanel rxPanel = new JPanel(new FlowLayout(isOutgoing ? FlowLayout.RIGHT : FlowLayout.LEFT, 4, 0));
         rxPanel.setOpaque(false);
@@ -1278,6 +1219,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         holder.content = message;
         holder.isMe = isOutgoing;
         holder.contentLabel = msgLbl;
+        holder.delivery = delivery;
         holder.reactionsPanel = rxPanel;
         holder.rootRow = row;
         messageMap.put(uuid, holder);
@@ -1296,7 +1238,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         boolean isMe = sender.equalsIgnoreCase(client.getUsername());
         String time = LocalTime.now().format(timeFormatter);
 
-        JPanel row = new JPanel(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 4));
+        JPanel row = new MessageRow(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 4));
         row.setOpaque(false);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 999));
 
@@ -1357,13 +1299,16 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
 
     private void attachMessageContextMenu(JComponent comp, String uuid, String sender, String content) {
-        comp.addMouseListener(new MouseAdapter() {
+        MouseAdapter trigger = new MouseAdapter() {
             @Override public void mousePressed(MouseEvent e) { if (e.isPopupTrigger()) showMenu(e); }
             @Override public void mouseReleased(MouseEvent e) { if (e.isPopupTrigger()) showMenu(e); }
             private void showMenu(MouseEvent e) {
+                MessageBubbleHolder holder = messageMap.get(uuid);
+                if (holder != null && holder.revoked) return;
+                String currentContent = holder == null ? content : holder.content;
                 JPopupMenu popup = new JPopupMenu();
 
-                JMenu rxMenu = new JMenu("❤️ Thả cảm xúc");
+                JMenu rxMenu = new JMenu("Thả cảm xúc");
                 String[] rxList = {"❤️", "👍", "😂", "😮", "😢", "🔥"};
                 for (String emoji : rxList) {
                     JMenuItem mi = new JMenuItem(emoji);
@@ -1377,16 +1322,16 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
                 }
                 popup.add(rxMenu);
 
-                JMenuItem replyItem = new JMenuItem("↩️ Trả lời");
-                replyItem.addActionListener(ev -> setReplyTarget(uuid, sender, content));
+                JMenuItem replyItem = new JMenuItem("Trả lời");
+                replyItem.addActionListener(ev -> setReplyTarget(uuid, sender, currentContent));
                 popup.add(replyItem);
 
                 if (sender.equalsIgnoreCase(client.getUsername())) {
                     popup.addSeparator();
 
-                    JMenuItem editItem = new JMenuItem("✏️ Chỉnh sửa tin nhắn");
+                    JMenuItem editItem = new JMenuItem("Chỉnh sửa tin nhắn");
                     editItem.addActionListener(ev -> {
-                        String newText = JOptionPane.showInputDialog(ChatFrame.this, "Nội dung chỉnh sửa:", content);
+                        String newText = JOptionPane.showInputDialog(ChatFrame.this, "Nội dung chỉnh sửa:", currentContent);
                         if (newText != null && !newText.trim().isEmpty()) {
                             String recipient = (String) cbRecipient.getSelectedItem();
                             String target = (recipient == null || recipient.equals(ALL_USERS)) ? "#" + currentRoomName : recipient;
@@ -1395,7 +1340,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
                     });
                     popup.add(editItem);
 
-                    JMenuItem revokeItem = new JMenuItem("🗑️ Thu hồi tin nhắn");
+                    JMenuItem revokeItem = new JMenuItem("Thu hồi tin nhắn");
                     revokeItem.addActionListener(ev -> {
                         int c = JOptionPane.showConfirmDialog(ChatFrame.this, "Bạn có chắc muốn thu hồi tin nhắn này?", "Thu hồi", JOptionPane.YES_NO_OPTION);
                         if (c == JOptionPane.YES_OPTION) {
@@ -1407,9 +1352,17 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
                     popup.add(revokeItem);
                 }
 
-                popup.show(comp, e.getX(), e.getY());
+                popup.show(e.getComponent(), e.getX(), e.getY());
             }
-        });
+        };
+        installPopupTrigger(comp, trigger);
+    }
+
+    private void installPopupTrigger(Component component, MouseAdapter trigger) {
+        component.addMouseListener(trigger);
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) installPopupTrigger(child, trigger);
+        }
     }
 
     private void updateReactionsUI(MessageBubbleHolder holder, String reactionsStr) {
@@ -1446,7 +1399,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
 
     public void addSystemMessage(String text) {
-        JPanel row = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 6));
+        JPanel row = new MessageRow(new FlowLayout(FlowLayout.CENTER, 0, 6));
         row.setOpaque(false);
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
 
@@ -1462,6 +1415,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
 
     private void appendBubbleRow(JPanel row) {
+        if (emptyConversation != null) messagesBox.remove(emptyConversation);
         messagesBox.add(row);
         messagesBox.revalidate();
         messagesBox.repaint();
@@ -1471,20 +1425,81 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         });
     }
 
+    private static class MessageRow extends JPanel {
+        MessageRow(FlowLayout layout) { super(layout); }
+        @Override public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    }
+
+    private void reflowMessages() {
+        for (MessageBubbleHolder holder : messageMap.values()) {
+            String content = holder.contentLabel.getText()
+                    .replaceFirst("^<html><body[^>]*>", "")
+                    .replaceFirst("</body></html>$", "");
+            holder.contentLabel.setText(messageHtml(content));
+        }
+        messagesBox.revalidate();
+        messagesBox.repaint();
+    }
+
+    private String messageHtml(String content) {
+        int available = chatScroll.getViewport().getWidth();
+        int limit = Math.min(330, Math.max(140, (available - 150) * 3 / 4));
+        String plain = content.replaceAll("<[^>]*>", "");
+        int textWidth = messagesBox.getFontMetrics(UIUtils.FONT_REGULAR).stringWidth(plain);
+        int width = Math.min(limit, Math.max(75, textWidth * 3 / 4 + 5));
+        return "<html><body style='width:" + width + "px'>" + content + "</body></html>";
+    }
+
+    private void showEmptyConversation() {
+        emptyConversation = new JPanel();
+        emptyConversation.setOpaque(false);
+        emptyConversation.setLayout(new BoxLayout(emptyConversation, BoxLayout.Y_AXIS));
+        emptyConversation.setBorder(new EmptyBorder(70, 20, 50, 20));
+        JLabel icon = new JLabel(UIUtils.icon("chat", 48));
+        icon.setForeground(UIUtils.COLOR_PRIMARY);
+        icon.setAlignmentX(Component.CENTER_ALIGNMENT);
+        emptyConversation.add(icon);
+        emptyConversation.add(Box.createVerticalStrut(20));
+        JLabel title = new JLabel("Một lời chào để bắt đầu.");
+        title.setFont(UIUtils.FONT_DISPLAY);
+        title.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
+        title.setAlignmentX(Component.CENTER_ALIGNMENT);
+        emptyConversation.add(title);
+        emptyConversation.add(Box.createVerticalStrut(10));
+        JLabel hint = new JLabel("Chọn một người bạn hoặc gửi tin nhắn đầu tiên vào phòng.");
+        hint.setFont(UIUtils.FONT_SMALL);
+        hint.setForeground(UIUtils.COLOR_TEXT_SECONDARY);
+        hint.setAlignmentX(Component.CENTER_ALIGNMENT);
+        emptyConversation.add(hint);
+        messagesBox.add(emptyConversation);
+    }
+
     private String escapeHtml(String t) {
         return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     // ─── Callbacks ──────────────────────────────────────────────────────────────
-    @Override public void onMessageReceived(String sender, String message) {
-        SwingUtilities.invokeLater(() -> addPublicMessage(sender, message));
+    // ServerListener emits legacy and rich callbacks for API compatibility. Render only rich events.
+    @Override public void onMessageReceived(String sender, String message) {}
+    @Override public void onPrivateMessageReceived(String sender, String receiver, String message) {}
+    @Override public void onMessageDeliveryChanged(String id, client.messaging.DeliveryTracker.State state, String detail) {
+        SwingUtilities.invokeLater(() -> {
+            MessageBubbleHolder holder = messageMap.get(id);
+            if (holder != null && holder.delivery != null) {
+                holder.delivery.update(state, detail);
+                holder.rootRow.revalidate();
+                messagesBox.revalidate();
+            }
+        });
     }
-    @Override public void onPrivateMessageReceived(String sender, String receiver, String message) {
-        SwingUtilities.invokeLater(() -> addPrivateMessage(sender, receiver, message, false));
-    }
+
     @Override public void onChatMessageReceived(ChatMessageItem item) {
         SwingUtilities.invokeLater(() -> {
-            addPublicChatMessage(item);
+            String selected = (String) cbRecipient.getSelectedItem();
+            if ((selected == null || selected.equals(ALL_USERS))
+                    && (item.recipient() == null || item.recipient().equalsIgnoreCase("#" + currentRoomName))) addPublicChatMessage(item);
             if (!item.sender().equalsIgnoreCase(client.getUsername())) {
                 notificationManager.notifyNewMessage(item.sender(), item.content());
             }
@@ -1493,7 +1508,10 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     @Override public void onPrivateChatMessageReceived(ChatMessageItem item) {
         SwingUtilities.invokeLater(() -> {
             boolean isMe = item.sender().equalsIgnoreCase(client.getUsername());
-            addPrivateChatMessage(item, isMe);
+            String other = isMe ? item.recipient() : item.sender();
+            String selected = (String) cbRecipient.getSelectedItem();
+            if (other != null && other.equalsIgnoreCase(selected)) addPrivateChatMessage(item, isMe);
+            else if (!isMe) showToast("Tin nhắn mới từ @" + other, UIUtils.COLOR_PRIMARY);
             if (!isMe) {
                 notificationManager.notifyNewMessage(item.sender(), item.content());
             }
@@ -1502,7 +1520,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     @Override public void onTyping(String sender, boolean isTyping) {
         SwingUtilities.invokeLater(() -> {
             if (isTyping) {
-                lblTypingIndicator.setText("✍️ @" + sender + " đang nhập tin nhắn...");
+                lblTypingIndicator.setText("@" + sender + " đang nhập tin nhắn…");
                 lblTypingIndicator.setVisible(true);
             } else {
                 lblTypingIndicator.setText("");
@@ -1522,8 +1540,8 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         SwingUtilities.invokeLater(() -> {
             MessageBubbleHolder holder = messageMap.get(messageId);
             if (holder != null && holder.contentLabel != null) {
-                holder.contentLabel.setText("<html><body style='max-width:380px; word-wrap:break-word;'>"
-                    + escapeHtml(newContent) + " <i style='font-size:9px; color:#94A3B8;'>(đã sửa)</i></body></html>");
+                holder.content = newContent;
+                holder.contentLabel.setText(messageHtml(escapeHtml(newContent) + " <i style='font-size:9px; color:#94A3B8;'>(đã sửa)</i>"));
                 messagesBox.revalidate();
                 messagesBox.repaint();
             }
@@ -1533,7 +1551,8 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         SwingUtilities.invokeLater(() -> {
             MessageBubbleHolder holder = messageMap.get(messageId);
             if (holder != null && holder.contentLabel != null) {
-                holder.contentLabel.setText("<html><body style='max-width:380px; word-wrap:break-word;'><i style='color:#94A3B8;'>🚫 Tin nhắn đã bị thu hồi</i></body></html>");
+                holder.revoked = true;
+                holder.contentLabel.setText(messageHtml("<i style='color:#94A3B8;'>Tin nhắn đã bị thu hồi</i>"));
                 if (holder.reactionsPanel != null) {
                     holder.reactionsPanel.removeAll();
                     holder.reactionsPanel.setVisible(false);
@@ -1545,15 +1564,27 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
     @Override public void onHistoryLoaded(String target, List<ChatMessageItem> messages) {
         SwingUtilities.invokeLater(() -> {
+            String selected = (String) cbRecipient.getSelectedItem();
+            String expected = selected == null || selected.equals(ALL_USERS) ? "#" + currentRoomName : selected;
+            if (!expected.equalsIgnoreCase(target)) return;
             messagesBox.removeAll();
             messageMap.clear();
-            addSystemMessage("— Đã tải lịch sử cuộc trò chuyện (" + messages.size() + " tin nhắn) —");
+            if (messages.isEmpty()) showEmptyConversation();
             for (ChatMessageItem item : messages) {
-                if ("PUBLIC".equalsIgnoreCase(item.recipient()) || (item.recipient() != null && item.recipient().startsWith("#"))) {
+                if (expected.startsWith("#")) {
                     addPublicChatMessage(item);
                 } else {
                     boolean isMe = item.sender().equalsIgnoreCase(client.getUsername());
                     addPrivateChatMessage(item, isMe);
+                }
+            }
+            for (Packet pending : client.getUnsentMessages()) {
+                boolean isPublic = pending.getType() == Packet.Type.MESSAGE;
+                if ((isPublic && expected.equalsIgnoreCase(pending.getRecipient()))
+                        || (!isPublic && expected.equalsIgnoreCase(pending.getRecipient()))) {
+                    ChatMessageItem draft = new ChatMessageItem(pending.getId(), client.getUsername(),
+                            isPublic ? expected : pending.getRecipient(), pending.getContent(), pending.getExtra(), false, false, "", pending.getTimestamp());
+                    if (isPublic) addPublicChatMessage(draft); else addPrivateChatMessage(draft, true);
                 }
             }
             messagesBox.revalidate();
@@ -1621,25 +1652,30 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
     @Override public void onUserListUpdated(List<String> users) {
         SwingUtilities.invokeLater(() -> {
-            String cur = (String) cbRecipient.getSelectedItem();
             userListModel.clear();
-            cbRecipient.removeAllItems();
-            cbRecipient.addItem(ALL_USERS);
-            for (String u : users) {
-                userListModel.addElement(u);
-                if (!u.equalsIgnoreCase(client.getUsername())) cbRecipient.addItem(u);
-            }
+            for (String user : users) userListModel.addElement(user);
             lblOnlineBadge.setText("● " + users.size() + " trực tuyến");
-            if (cur != null && !cur.equals(ALL_USERS)) {
-                for (int i = 0; i < cbRecipient.getItemCount(); i++) {
-                    if (cbRecipient.getItemAt(i).equalsIgnoreCase(cur)) {
-                        cbRecipient.setSelectedIndex(i); break;
-                    }
-                }
-            }
-            updateRecipientBadge();
+            rebuildRecipients();
         });
     }
+
+    private void rebuildRecipients() {
+        String selected = (String) cbRecipient.getSelectedItem();
+        java.util.Set<String> names = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < userListModel.size(); i++) names.add(userListModel.get(i));
+        for (int i = 0; i < friendListModel.size(); i++) names.add(friendListModel.get(i).username());
+        if (selected != null && !selected.equals(ALL_USERS)) names.add(selected);
+        names.remove(client.getUsername());
+        updatingRecipients = true;
+        try {
+            cbRecipient.removeAllItems();
+            cbRecipient.addItem(ALL_USERS);
+            for (String name : names) cbRecipient.addItem(name);
+            cbRecipient.setSelectedItem(selected == null ? ALL_USERS : selected);
+        } finally { updatingRecipients = false; }
+        updateConversationHeading();
+    }
+
     @Override public void onRoomListUpdated(List<String> rooms) {
         SwingUtilities.invokeLater(() -> {
             groupListModel.clear();
@@ -1653,26 +1689,35 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         SwingUtilities.invokeLater(() -> {
             friendListModel.clear();
             for (FriendItem f : friends) friendListModel.addElement(f);
+            if (friendsDialog != null && friendsDialog.isDisplayable()) friendsDialog.receiveFriends(friends);
             if (friendList != null) friendList.repaint();
+            rebuildRecipients();
         });
     }
     @Override public void onPendingRequestsUpdated(List<String> senders) {
         SwingUtilities.invokeLater(() -> {
-            this.pendingRequests = senders;
+            int previousCount = this.pendingRequests.size();
+            this.pendingRequests = new ArrayList<>(senders);
+            if (friendsDialog != null && friendsDialog.isDisplayable()) friendsDialog.receivePending(senders);
             updateRequestsBadge();
-            if (!senders.isEmpty()) {
+            if (senders.size() > previousCount) {
                 showToast("Bạn có " + senders.size() + " lời mời kết bạn mới!", UIUtils.COLOR_ONLINE);
             }
         });
     }
-    @Override public void onUserSearchResult(List<SearchUserItem> users) {
+    @Override public void onUserSearchResult(String requestId, List<SearchUserItem> users) {
         SwingUtilities.invokeLater(() -> {
-            if (searchResultModel != null) {
-                searchResultModel.clear();
-                for (SearchUserItem u : users) searchResultModel.addElement(u);
-            }
+            if (friendsDialog != null && friendsDialog.isDisplayable()) friendsDialog.receiveSearch(requestId, users);
         });
     }
+
+    @Override public void onFriendActionResult(String action, String target, boolean success, String message) {
+        SwingUtilities.invokeLater(() -> {
+            if (friendsDialog != null && friendsDialog.isDisplayable()) friendsDialog.receiveAction(action, target, success, message);
+            showToast(message, success ? UIUtils.COLOR_ONLINE : UIUtils.COLOR_DANGER);
+        });
+    }
+
     @Override public void onSystemMessage(String message) {
         SwingUtilities.invokeLater(() -> addSystemMessage(message));
     }
@@ -1681,6 +1726,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             JOptionPane.showMessageDialog(this,
                 "Mất kết nối tới Server!\n" + (reason != null ? reason : ""),
                 "Ngắt kết nối", JOptionPane.WARNING_MESSAGE);
+            if (friendsDialog != null) friendsDialog.dispose();
             this.dispose();
             if (loginFrame != null) loginFrame.setVisible(true);
         });
@@ -1692,7 +1738,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
             FriendItem friend = (FriendItem) value;
             JPanel item = new JPanel(new BorderLayout(8, 0));
-            item.setBorder(new EmptyBorder(6, 8, 6, 8));
+            item.setBorder(new EmptyBorder(12, 14, 12, 14));
             item.setOpaque(true);
             item.setBackground(isSelected ? UIUtils.COLOR_PRIMARY_LIGHT : UIUtils.COLOR_BG_SIDEBAR);
 
@@ -1746,7 +1792,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             boolean isSelf  = username.equalsIgnoreCase(client.getUsername());
 
             JPanel item = new JPanel(new BorderLayout(8, 0));
-            item.setBorder(new EmptyBorder(6, 8, 6, 8));
+            item.setBorder(new EmptyBorder(12, 14, 12, 14));
             item.setOpaque(true);
             item.setBackground(isSelected ? UIUtils.COLOR_PRIMARY_LIGHT : UIUtils.COLOR_BG_SIDEBAR);
 
@@ -1773,10 +1819,10 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             boolean isCurrent = roomName.equalsIgnoreCase(currentRoomName);
 
             JPanel item = new JPanel(new BorderLayout(8, 0));
-            item.setBorder(new EmptyBorder(6, 8, 6, 8));
+            item.setBorder(new EmptyBorder(12, 14, 12, 14));
             item.setOpaque(true);
             if (isSelected)        item.setBackground(UIUtils.COLOR_PRIMARY_LIGHT);
-            else if (isCurrent)    item.setBackground(new Color(25, 35, 50));
+            else if (isCurrent)    item.setBackground(UIUtils.COLOR_PRIMARY_LIGHT);
             else                   item.setBackground(UIUtils.COLOR_BG_SIDEBAR);
 
             JPanel icon = new JPanel() {
@@ -1799,7 +1845,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             icon.setPreferredSize(new Dimension(26, 26));
             item.add(icon, BorderLayout.WEST);
 
-            JLabel nameLbl = new JLabel(roomName + (isCurrent ? " (Đang vào)" : ""));
+            JLabel nameLbl = new JLabel(roomName + (isCurrent ? "  ·  Đang mở" : ""));
             nameLbl.setFont(isCurrent ? UIUtils.FONT_BOLD : UIUtils.FONT_REGULAR);
             nameLbl.setForeground(isCurrent ? UIUtils.COLOR_PRIMARY : UIUtils.COLOR_TEXT_PRIMARY);
             item.add(nameLbl, BorderLayout.CENTER);

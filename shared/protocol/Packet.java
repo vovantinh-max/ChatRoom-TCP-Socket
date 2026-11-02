@@ -34,6 +34,7 @@ public class Packet implements Serializable {
         MESSAGE,
         PRIVATE,
         MESSAGE_ACK,
+        MESSAGE_FAILED,
         TYPING,
         REACTION,
         EDIT_MESSAGE,
@@ -52,6 +53,7 @@ public class Packet implements Serializable {
         FRIEND_ACCEPT,
         FRIEND_REJECT,
         FRIEND_REMOVE,
+        FRIEND_ACTION_RESULT,
         FRIEND_LIST,
         FRIEND_PENDING_LIST,
         USER_SEARCH,
@@ -111,7 +113,7 @@ public class Packet implements Serializable {
     }
 
     public static Packet fromRawString(String raw) {
-        if (raw == null || raw.trim().isEmpty()) {
+        if (raw == null || raw.trim().isEmpty() || raw.length() > ProtocolLimits.MAX_FRAME_CHARS) {
             return null;
         }
 
@@ -121,15 +123,16 @@ public class Packet implements Serializable {
         }
 
         List<String> parts = splitFields(raw);
-        if (parts.size() < 7) {
-            return parseLegacyFormat(raw);
+        if (!raw.contains("^")) return parseLegacyFormat(raw);
+        if (parts.size() != 7) {
+            return null;
         }
 
         Packet p = new Packet();
         try {
             p.type = Type.valueOf(unescape(parts.get(0)));
         } catch (IllegalArgumentException e) {
-            p.type = Type.MESSAGE;
+            return null;
         }
         p.id = unescape(parts.get(1));
         try {

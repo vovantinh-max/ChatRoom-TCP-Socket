@@ -1,8 +1,13 @@
 package client;
 
 import shared.protocol.Packet;
+import client.messaging.DeliveryTracker;
+import shared.protocol.BoundedLineReader;
+import shared.protocol.ProtocolLimits;
+import shared.protocol.HistoryCodec;
 import java.io.*;
 import java.net.Socket;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,11 +42,15 @@ public class ChatClient {
         void onSystemMessage(String message);
         void onDisconnected(String reason);
 
+        default void onRoomChanged(String room) {}
         default void onPacketReceived(Packet packet) {}
+        default void onMessageDeliveryChanged(String id, DeliveryTracker.State state, String detail) {}
         default void onConnectionStatusChanged(boolean connected, String status) {}
         default void onFriendListUpdated(List<FriendItem> friends) {}
         default void onPendingRequestsUpdated(List<String> senders) {}
         default void onUserSearchResult(List<SearchUserItem> users) {}
+        default void onUserSearchResult(String requestId, List<SearchUserItem> users) { onUserSearchResult(users); }
+        default void onFriendActionResult(String action, String target, boolean success, String message) {}
 
         // Phase 3 Callbacks
         default void onChatMessageReceived(ChatMessageItem item) {}
@@ -70,21 +79,44 @@ public class ChatClient {
     private int serverPort;
     private volatile boolean connected = false;
 
-    private ChatEventListener eventListener;
+    private volatile ChatEventListener eventListener;
+    private final DeliveryTracker deliveries = new DeliveryTracker(this::sendPacket, (id, state, detail) -> {
+        ChatEventListener listener = eventListener;
+        if (listener != null) listener.onMessageDeliveryChanged(id, state, detail);
+    });
+    public boolean retryMessage(String id) { return deliveries.retry(id); }
+    public DeliveryTracker.State getMessageDeliveryState(String id) { return deliveries.state(id); }
+    public List<Packet> getUnsentMessages() { return deliveries.unsent(); }
+    void deliveryResult(String id, boolean stored, String detail) { deliveries.complete(id, stored, detail); }
+    private final Object eventStateLock = new Object();
+    private List<String> latestUsers;
+    private List<String> latestRooms;
+    private List<FriendItem> latestFriends;
+    private List<String> latestPending;
     private ScheduledExecutorService heartbeatExecutor;
     private volatile long lastPongTime = 0;
+    private volatile String currentRoom = "General";
+    public String getCurrentRoom() { return currentRoom; }
 
     public ChatClient() {
     }
 
     public void setEventListener(ChatEventListener listener) {
-        this.eventListener = listener;
+        synchronized (eventStateLock) {
+            this.eventListener = listener;
+            if (listener == null) return;
+            if (latestUsers != null) listener.onUserListUpdated(latestUsers);
+            if (latestRooms != null) listener.onRoomListUpdated(latestRooms);
+            if (latestFriends != null) listener.onFriendListUpdated(latestFriends);
+            if (latestPending != null) listener.onPendingRequestsUpdated(latestPending);
+            if (connected) listener.onRoomChanged(currentRoom);
+        }
     }
 
     // ─── ĐĂNG KÝ TÀI KHOẢN MỚI ────────────────────────────────────────────────
     public String register(String host, int port, String username, String password, String displayName) throws IOException {
         try (Socket regSocket = new Socket(host, port);
-             BufferedReader regReader = new BufferedReader(new InputStreamReader(regSocket.getInputStream(), StandardCharsets.UTF_8));
+             BufferedReader regReader = BoundedLineReader.create(regSocket.getInputStream());
              PrintWriter regWriter = new PrintWriter(new OutputStreamWriter(regSocket.getOutputStream(), StandardCharsets.UTF_8), true)) {
 
             regSocket.setSoTimeout(10000);
@@ -116,41 +148,57 @@ public class ChatClient {
             disconnect();
         }
 
+        synchronized (eventStateLock) {
+            currentRoom = "General";
+            latestUsers = null;
+            latestRooms = null;
+            latestFriends = null;
+            latestPending = null;
+        }
         this.serverHost = host;
         this.serverPort = port;
         this.username = username;
 
-        this.socket = new Socket(host, port);
-        this.socket.setTcpNoDelay(true);
-        this.socket.setKeepAlive(true);
+        this.socket = new Socket();
+        try {
+            this.socket.connect(new InetSocketAddress(host, port), 10000);
+            this.socket.setSoTimeout(10000);
+            this.socket.setTcpNoDelay(true);
+            this.socket.setKeepAlive(true);
 
-        this.reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
-        this.writer = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
+            this.reader = BoundedLineReader.create(socket.getInputStream());
+            this.writer = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
 
-        // Gửi gói tin LOGIN kèm mật khẩu
-        Packet loginPacket = new Packet(Packet.Type.LOGIN, username, password != null ? password : "");
-        synchronized (writeLock) {
-            writer.println(loginPacket.toRawString());
-            writer.flush();
-        }
+            // Gửi gói tin LOGIN kèm mật khẩu
+            Packet loginPacket = new Packet(Packet.Type.LOGIN, username, password != null ? password : "");
+            synchronized (writeLock) {
+                writer.println(loginPacket.toRawString());
+                writer.flush();
+            }
 
-        String initialResponse = reader.readLine();
-        if (initialResponse == null) {
+            String initialResponse = reader.readLine();
+            if (initialResponse == null) {
+                throw new IOException("Máy chủ đã đóng kết nối hoặc đang tạm dừng hoạt động.");
+            }
+
+            Packet responsePacket = Packet.fromRawString(initialResponse);
+            if (responsePacket != null && responsePacket.getType() == Packet.Type.LOGIN_FAILED) {
+                String reason = responsePacket.getContent();
+                throw new IOException(reason != null && !reason.isEmpty() ? reason : "Đăng nhập thất bại.");
+            } else if (initialResponse.startsWith("LOGIN_FAILED|") || initialResponse.equals("USERNAME_TAKEN")) {
+                String reason = initialResponse.startsWith("LOGIN_FAILED|")
+                        ? initialResponse.substring(13).trim()
+                        : "Tên người dùng đã tồn tại hoặc mật khẩu sai.";
+                throw new IOException(reason);
+            }
+
+            if (responsePacket == null || responsePacket.getType() != Packet.Type.LOGIN_SUCCESS) {
+                throw new IOException("Phản hồi đăng nhập không hợp lệ.");
+            }
+            this.socket.setSoTimeout(0);
+        } catch (IOException | RuntimeException e) {
             disconnect();
-            throw new IOException("Máy chủ đã đóng kết nối hoặc đang tạm dừng hoạt động.");
-        }
-
-        Packet responsePacket = Packet.fromRawString(initialResponse);
-        if (responsePacket != null && responsePacket.getType() == Packet.Type.LOGIN_FAILED) {
-            disconnect();
-            String reason = responsePacket.getContent();
-            throw new IOException(reason != null && !reason.isEmpty() ? reason : "Đăng nhập thất bại.");
-        } else if (initialResponse.startsWith("LOGIN_FAILED|") || initialResponse.equals("USERNAME_TAKEN")) {
-            disconnect();
-            String reason = initialResponse.startsWith("LOGIN_FAILED|")
-                    ? initialResponse.substring(13).trim()
-                    : "Tên người dùng đã tồn tại hoặc mật khẩu sai.";
-            throw new IOException(reason);
+            throw e;
         }
 
         this.connected = true;
@@ -168,9 +216,7 @@ public class ChatClient {
             eventListener.onConnectionStatusChanged(true, "Đã kết nối");
         }
 
-        if (responsePacket != null && responsePacket.getType() == Packet.Type.LOGIN_SUCCESS) {
-            notifySystemMessage("Đăng nhập thành công! Chào mừng @" + username);
-        }
+        notifySystemMessage("Đăng nhập thành công! Chào mừng @" + username);
 
         return true;
     }
@@ -236,9 +282,11 @@ public class ChatClient {
         sendPacket(new Packet(Packet.Type.FRIEND_REMOVE, username, targetUsername));
     }
 
-    public void searchUsers(String query) {
-        if (!connected) return;
-        sendPacket(new Packet(Packet.Type.USER_SEARCH, username, query));
+    public String searchUsers(String query) {
+        if (!connected) return null;
+        Packet request = new Packet(Packet.Type.USER_SEARCH, username, query);
+        sendPacket(request);
+        return request.getId();
     }
 
     public void changeStatus(String status) {
@@ -247,11 +295,12 @@ public class ChatClient {
     }
 
     // ─── Gửi gói tin Thread-Safe ────────────────────────────────────────────────
-    public void sendPacket(Packet packet) {
-        if (!connected || writer == null || packet == null || socket == null || socket.isClosed()) return;
+    public boolean sendPacket(Packet packet) {
+        if (!connected || writer == null || packet == null || socket == null || socket.isClosed()) return false;
         synchronized (writeLock) {
             writer.println(packet.toRawString());
             writer.flush();
+            return !writer.checkError();
         }
     }
 
@@ -259,22 +308,23 @@ public class ChatClient {
         sendPublicMessage(message, null);
     }
 
-    public void sendPublicMessage(String message, String replyToId) {
-        if (!connected) return;
+    public String sendPublicMessage(String message, String replyToId) { return sendPublicMessage(message, replyToId, currentRoom); }
+
+    public String sendPublicMessage(String message, String replyToId, String room) {
         Packet packet = new Packet(Packet.Type.MESSAGE, username, message);
+        if (room != null) packet.setRecipient("#" + room);
         packet.setExtra(replyToId);
-        sendPacket(packet);
+        return deliveries.send(packet);
     }
 
     public void sendPrivateMessage(String recipient, String message) {
         sendPrivateMessage(recipient, message, null);
     }
 
-    public void sendPrivateMessage(String recipient, String message, String replyToId) {
-        if (!connected) return;
+    public String sendPrivateMessage(String recipient, String message, String replyToId) {
         Packet packet = new Packet(Packet.Type.PRIVATE, username, recipient, message);
         packet.setExtra(replyToId);
-        sendPacket(packet);
+        return deliveries.send(packet);
     }
 
     public void sendTyping(String target, boolean isTyping) {
@@ -406,6 +456,7 @@ public class ChatClient {
     public synchronized void disconnect() {
         if (!connected && (socket == null || socket.isClosed())) return;
         connected = false;
+        deliveries.disconnected();
         stopHeartbeat();
 
         if (serverListener != null) {
@@ -413,6 +464,7 @@ public class ChatClient {
         }
 
         try {
+            if (socket != null && !socket.isClosed()) socket.close();
             synchronized (writeLock) {
                 if (writer != null) writer.close();
             }
@@ -435,11 +487,24 @@ public class ChatClient {
     }
 
     void notifyUserList(List<String> users) {
-        if (eventListener != null) eventListener.onUserListUpdated(users);
+        synchronized (eventStateLock) {
+            latestUsers = List.copyOf(users);
+            if (eventListener != null) eventListener.onUserListUpdated(latestUsers);
+        }
+    }
+
+    void notifyRoomChanged(String room) {
+        synchronized (eventStateLock) {
+            currentRoom = room;
+            if (eventListener != null) eventListener.onRoomChanged(room);
+        }
     }
 
     void notifyRoomList(List<String> rooms) {
-        if (eventListener != null) eventListener.onRoomListUpdated(rooms);
+        synchronized (eventStateLock) {
+            latestRooms = List.copyOf(rooms);
+            if (eventListener != null) eventListener.onRoomListUpdated(latestRooms);
+        }
     }
 
     void notifySystemMessage(String message) {
@@ -451,15 +516,25 @@ public class ChatClient {
     }
 
     void notifyFriendList(List<FriendItem> friends) {
-        if (eventListener != null) eventListener.onFriendListUpdated(friends);
+        synchronized (eventStateLock) {
+            latestFriends = List.copyOf(friends);
+            if (eventListener != null) eventListener.onFriendListUpdated(latestFriends);
+        }
     }
 
     void notifyPendingRequests(List<String> senders) {
-        if (eventListener != null) eventListener.onPendingRequestsUpdated(senders);
+        synchronized (eventStateLock) {
+            latestPending = List.copyOf(senders);
+            if (eventListener != null) eventListener.onPendingRequestsUpdated(latestPending);
+        }
     }
 
-    void notifyUserSearchResult(List<SearchUserItem> users) {
-        if (eventListener != null) eventListener.onUserSearchResult(users);
+    void notifyFriendActionResult(String action, String target, boolean success, String message) {
+        if (eventListener != null) eventListener.onFriendActionResult(action, target, success, message);
+    }
+
+    void notifyUserSearchResult(String requestId, List<SearchUserItem> users) {
+        if (eventListener != null) eventListener.onUserSearchResult(requestId, users);
     }
 
     void notifyChatMessage(ChatMessageItem item) {

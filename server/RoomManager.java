@@ -14,25 +14,32 @@ public class RoomManager {
         createRoom("Gaming");
     }
 
-    public void createRoom(String roomName) {
+    public synchronized void createRoom(String roomName) {
         if (roomName == null || roomName.trim().isEmpty()) {
             return;
         }
+        if (canonicalName(roomName) != null) return;
         rooms.putIfAbsent(roomName.trim(), ConcurrentHashMap.newKeySet());
+    }
+
+    public String canonicalName(String name) {
+        if (name == null) return null;
+        for (String room : rooms.keySet()) if (room.equalsIgnoreCase(name.trim())) return room;
+        return null;
     }
 
     public boolean roomExists(String roomName) {
         if (roomName == null) {
             return false;
         }
-        return rooms.containsKey(roomName.trim());
+        return canonicalName(roomName) != null;
     }
 
     public boolean joinRoom(String roomName, ClientHandler client) {
         if (client == null || !roomExists(roomName)) {
             return false;
         }
-        roomName = roomName.trim();
+        roomName = canonicalName(roomName);
         leaveCurrentRoom(client);
         rooms.get(roomName).add(client);
         return true;
@@ -51,7 +58,7 @@ public class RoomManager {
         if (roomName == null || message == null) {
             return;
         }
-        Set<ClientHandler> clients = rooms.get(roomName);
+        Set<ClientHandler> clients = rooms.get(canonicalName(roomName) == null ? "" : canonicalName(roomName));
         if (clients == null) {
             return;
         }
@@ -61,14 +68,14 @@ public class RoomManager {
     }
 
     public Set<String> getRoomNames() {
-        return rooms.keySet();
+        return Set.copyOf(rooms.keySet());
     }
 
     public int getClientCount(String roomName) {
         if (roomName == null) {
             return 0;
         }
-        Set<ClientHandler> clients = rooms.get(roomName);
+        Set<ClientHandler> clients = rooms.get(canonicalName(roomName) == null ? "" : canonicalName(roomName));
         return (clients == null) ? 0 : clients.size();
     }
 

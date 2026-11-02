@@ -6,8 +6,9 @@
             "name": "ChatServer (Messenger Server)",
             "request": "launch",
             "mainClass": "server.ChatServer",
+            "preLaunchTask": "Build Messenger",
             "classPaths": [
-                "${workspaceFolder}",
+                "${workspaceFolder}/build/classes",
                 "${workspaceFolder}/lib/sqlite-jdbc-3.47.1.0.jar"
             ]
         },
@@ -16,8 +17,9 @@
             "name": "LoginFrame (Messenger Client)",
             "request": "launch",
             "mainClass": "client.ui.LoginFrame",
+            "preLaunchTask": "Build Messenger",
             "classPaths": [
-                "${workspaceFolder}",
+                "${workspaceFolder}/build/classes",
                 "${workspaceFolder}/lib/sqlite-jdbc-3.47.1.0.jar"
             ]
         }

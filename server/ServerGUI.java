@@ -522,7 +522,7 @@ public class ServerGUI extends JFrame {
     // ════════════════════════════════════════════════════════════════════════════
     //  SERVER ACTIONS
     // ════════════════════════════════════════════════════════════════════════════
-    private void startServer() {
+    void startServer() {
         if (chatServer == null) { appendLog("❌  Không thể Start Server."); return; }
         boolean started = chatServer.startServer();
         if (started) {

@@ -245,10 +245,10 @@ public class Phase3RichMessagingIntegrationTest {
         });
 
         try {
-            client1.register("127.0.0.1", 5000, u1, "Pass123!", "Alice");
-            client2.register("127.0.0.1", 5000, u2, "Pass123!", "Bob");
-            boolean c1Connected = client1.connect("127.0.0.1", 5000, u1, "Pass123!");
-            boolean c2Connected = client2.connect("127.0.0.1", 5000, u2, "Pass123!");
+            client1.register("127.0.0.1", TestSupport.PORT, u1, "Pass123!", "Alice");
+            client2.register("127.0.0.1", TestSupport.PORT, u2, "Pass123!", "Bob");
+            boolean c1Connected = client1.connect("127.0.0.1", TestSupport.PORT, u1, "Pass123!");
+            boolean c2Connected = client2.connect("127.0.0.1", TestSupport.PORT, u2, "Pass123!");
             assertTrue("Client 1 kết nối thành công", c1Connected);
             assertTrue("Client 2 kết nối thành công", c2Connected);
 

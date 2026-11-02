@@ -42,3 +42,4 @@ data/*.db-shm
 # Media and transfers
 downloads/
 uploads/
+build/

@@ -75,11 +75,11 @@ public class Phase4To7MediaAndFileIntegrationTest {
         ChatClient client2 = new ChatClient();
 
         try {
-            client1.register("127.0.0.1", 5000, u1, "Pass123!", "Alice");
-            client2.register("127.0.0.1", 5000, u2, "Pass123!", "Bob");
+            client1.register("127.0.0.1", TestSupport.PORT, u1, "Pass123!", "Alice");
+            client2.register("127.0.0.1", TestSupport.PORT, u2, "Pass123!", "Bob");
 
-            client1.connect("127.0.0.1", 5000, u1, "Pass123!");
-            client2.connect("127.0.0.1", 5000, u2, "Pass123!");
+            client1.connect("127.0.0.1", TestSupport.PORT, u1, "Pass123!");
+            client2.connect("127.0.0.1", TestSupport.PORT, u2, "Pass123!");
 
             Thread.sleep(300);
 

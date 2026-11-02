@@ -116,7 +116,7 @@ public class Phase2DatabaseAndFriendsIntegrationTest {
         ChatServer server = new ChatServer(clientManager, null, roomManager, db);
 
         boolean started = server.startServer();
-        assertTrue("Server khởi động port 5000", started);
+        assertTrue("Server khởi động trên cổng kiểm thử", started);
 
         ChatClient client = new ChatClient();
         String newUser = "client_user_" + (System.currentTimeMillis() % 100000);
@@ -124,14 +124,14 @@ public class Phase2DatabaseAndFriendsIntegrationTest {
 
         try {
             // Đăng ký qua Socket
-            String regResult = client.register("127.0.0.1", 5000, newUser, newPass, "Nguyễn Văn Client");
+            String regResult = client.register("127.0.0.1", TestSupport.PORT, newUser, newPass, "Nguyễn Văn Client");
             assertEquals("Đăng ký qua Socket thành công", "SUCCESS", regResult);
 
             // Đăng nhập sai pass
             boolean loginFailedThrown = false;
             try {
                 ChatClient clientFail = new ChatClient();
-                clientFail.connect("127.0.0.1", 5000, newUser, "SaiPass");
+                clientFail.connect("127.0.0.1", TestSupport.PORT, newUser, "SaiPass");
             } catch (Exception e) {
                 loginFailedThrown = true;
             }
@@ -139,7 +139,7 @@ public class Phase2DatabaseAndFriendsIntegrationTest {
 
             // Đăng nhập đúng pass
             ChatClient clientOk = new ChatClient();
-            boolean ok = clientOk.connect("127.0.0.1", 5000, newUser, newPass);
+            boolean ok = clientOk.connect("127.0.0.1", TestSupport.PORT, newUser, newPass);
             assertTrue("Đăng nhập thành công đúng mật khẩu qua Socket", ok);
 
             clientOk.disconnect();
@@ -178,8 +178,8 @@ public class Phase2DatabaseAndFriendsIntegrationTest {
 
         try {
             // Tạo 2 tài khoản
-            clientA.register("127.0.0.1", 5000, userA, "Pass123", "Alice Nguyễn");
-            clientB.register("127.0.0.1", 5000, userB, "Pass123", "Bob Trần");
+            clientA.register("127.0.0.1", TestSupport.PORT, userA, "Pass123", "Alice Nguyễn");
+            clientB.register("127.0.0.1", TestSupport.PORT, userB, "Pass123", "Bob Trần");
 
             clientB.setEventListener(new ChatClient.ChatEventListener() {
                 @Override public void onMessageReceived(String sender, String message) {}
@@ -227,8 +227,8 @@ public class Phase2DatabaseAndFriendsIntegrationTest {
             });
 
             // Cả 2 cùng kết nối online
-            clientA.connect("127.0.0.1", 5000, userA, "Pass123");
-            clientB.connect("127.0.0.1", 5000, userB, "Pass123");
+            clientA.connect("127.0.0.1", TestSupport.PORT, userA, "Pass123");
+            clientB.connect("127.0.0.1", TestSupport.PORT, userB, "Pass123");
             Thread.sleep(300); // Chờ handshake ban đầu hoàn tất
 
             // A gửi lời mời kết bạn cho B
