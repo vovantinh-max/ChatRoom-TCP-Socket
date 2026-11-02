@@ -32,3 +32,13 @@ start_tunnel.bat
 
 
 
+
+# SQLite runtime data
+data/*.db
+data/*.db-wal
+data/*.db-shm
+!lib/*.jar
+
+# Media and transfers
+downloads/
+uploads/

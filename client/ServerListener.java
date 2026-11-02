@@ -1,11 +1,18 @@
 package client;
 
+import client.ChatClient.FriendItem;
+import client.ChatClient.SearchUserItem;
+import shared.protocol.Packet;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
+/**
+ * ServerListener - Luồng đọc dữ liệu từ Server.
+ * Hỗ trợ phân tích cả định dạng Packet chuẩn mới và tương thích ngược với định dạng cũ.
+ */
 public class ServerListener implements Runnable {
 
     private final BufferedReader reader;
@@ -27,7 +34,7 @@ public class ServerListener implements Runnable {
                 processMessage(line);
             }
         } catch (IOException e) {
-            // connection dropped
+            // Connection closed or broken
         } finally {
             if (running) {
                 running = false;
@@ -36,97 +43,228 @@ public class ServerListener implements Runnable {
         }
     }
 
-    void processMessage(String message) {
-        String[] parts = message.split("\\|", -1);
-        String command = parts[0];
+    void processMessage(String raw) {
+        Packet packet = Packet.fromRawString(raw);
+        if (packet == null) return;
 
-        switch (command) {
-            case "USER_LIST":
-                if (parts.length >= 2) {
-                    String userString = parts[1];
-                    List<String> users = new ArrayList<>();
-                    if (!userString.isEmpty()) {
-                        for (String u : userString.split(",")) {
-                            String trimmed = u.trim();
-                            if (!trimmed.isEmpty()) {
-                                users.add(trimmed);
-                            }
-                        }
-                    }
-                    client.notifyUserList(users);
-                }
+        client.notifyPacket(packet);
+
+        switch (packet.getType()) {
+            case PONG:
+                client.handlePong();
                 break;
 
-            case "ROOM_LIST":
-                if (parts.length >= 2) {
-                    String roomString = parts[1];
-                    List<String> rooms = new ArrayList<>();
-                    if (!roomString.isEmpty()) {
-                        for (String r : roomString.split(",")) {
-                            String trimmed = r.trim();
-                            if (!trimmed.isEmpty()) {
-                                rooms.add(trimmed);
-                            }
-                        }
-                    }
-                    client.notifyRoomList(rooms);
-                }
+            case PING:
+                Packet pong = new Packet(Packet.Type.PONG, client.getUsername(), "");
+                client.sendPacket(pong);
                 break;
 
-            case "MESSAGE":
-                if (parts.length >= 3) {
-                    String sender = parts[1];
-                    String content = parts[2];
-                    client.notifyMessage(sender, content);
-                } else if (parts.length == 2) {
-                    client.notifySystemMessage(parts[1]);
-                }
+            case USER_LIST:
+                parseUserList(packet.getContent());
                 break;
 
-            case "PRIVATE":
-                if (parts.length >= 4) {
-                    String sender = parts[1];
-                    String receiver = parts[2];
-                    String content = parts[3];
-                    client.notifyPrivateMessage(sender, receiver, content);
-                }
+            case ROOM_LIST:
+                parseRoomList(packet.getContent());
                 break;
 
-            case "LOGOUT":
-                if (parts.length >= 2) {
-                    client.notifySystemMessage(parts[1] + " đã rời khỏi phòng chat.");
-                }
+            case MESSAGE:
+                client.notifyMessage(packet.getSender(), packet.getContent());
+                client.notifyChatMessage(new ChatClient.ChatMessageItem(
+                    packet.getId(), packet.getSender(), packet.getRecipient(),
+                    packet.getContent(), packet.getExtra(), false, false, "", packet.getTimestamp()
+                ));
                 break;
 
-            case "LOGIN_SUCCESS":
-            case "LOGIN_OK":
-                client.notifySystemMessage("Đăng nhập thành công!");
+            case PRIVATE:
+                client.notifyPrivateMessage(packet.getSender(), packet.getRecipient(), packet.getContent());
+                client.notifyPrivateChatMessage(new ChatClient.ChatMessageItem(
+                    packet.getId(), packet.getSender(), packet.getRecipient(),
+                    packet.getContent(), packet.getExtra(), false, false, "", packet.getTimestamp()
+                ));
                 break;
 
-            case "KICK":
-            case "DISCONNECT":
-                String kickReason = (parts.length >= 2) ? parts[1] : "Bạn đã bị xóa khỏi Server.";
+            // ─── NHẮN TIN THỜI GIAN THỰC NÂNG CAO (MODULE 3) ──────────────────
+            case TYPING:
+                client.notifyTyping(packet.getSender(), "START".equalsIgnoreCase(packet.getContent()));
+                break;
+
+            case REACTION:
+                client.notifyReactionUpdated(packet.getId(), packet.getContent(), packet.getExtra());
+                break;
+
+            case EDIT_MESSAGE:
+                client.notifyMessageEdited(packet.getId(), packet.getContent());
+                break;
+
+            case REVOKE_MESSAGE:
+                client.notifyMessageRevoked(packet.getId());
+                break;
+
+            case HISTORY_RESPONSE:
+                parseHistoryResponse(packet.getRecipient(), packet.getContent());
+                break;
+
+            // ─── SIGNALING GỌI THOẠI & VIDEO (MODULE 4, 5, 6, 7) ──────────────
+            case CALL_OFFER:
+            case CALL_ANSWER:
+            case CALL_CANDIDATE:
+            case CALL_END:
+            case CALL_REJECT:
+            case CALL_STATUS:
+                client.notifyCallPacket(packet);
+                break;
+
+            // ─── FILE TRANSFER (MODULE 8) ─────────────────────────────────────
+            case FILE_REQUEST:
+            case FILE_START:
+            case FILE_DATA:
+            case FILE_END:
+            case FILE_CANCEL:
+                client.notifyFilePacket(packet);
+                break;
+
+            case LOGOUT:
+                client.notifySystemMessage(packet.getSender() + " đã rời khỏi phòng chat.");
+                break;
+
+            case LOGIN_SUCCESS:
+                client.notifySystemMessage(packet.getContent() != null ? packet.getContent() : "Đăng nhập thành công!");
+                break;
+
+            // ─── TÍNH NĂNG BẠN BÈ & USER (MODULE 2) ───────────────────────────
+            case FRIEND_REQUEST:
+                client.notifySystemMessage("🔔 @" + packet.getSender() + " vừa gửi cho bạn một lời mời kết bạn!");
+                break;
+
+            case FRIEND_LIST:
+                parseFriendList(packet.getContent());
+                break;
+
+            case FRIEND_PENDING_LIST:
+                parsePendingRequests(packet.getContent());
+                break;
+
+            case USER_SEARCH_RESULT:
+                parseUserSearchResult(packet.getContent());
+                break;
+
+            case USER_STATUS_CHANGE:
+                client.notifySystemMessage("Trạng thái của @" + packet.getSender() + " hiện là: " + packet.getContent());
+                break;
+
+            case KICK:
                 running = false;
-                client.notifyDisconnected(kickReason);
+                client.notifyDisconnected(packet.getContent() != null ? packet.getContent() : "Bạn đã bị xóa khỏi Server.");
                 break;
 
-            case "LOGIN_FAILED":
-            case "ERROR":
-                String reason = (parts.length >= 2) ? parts[1] : "Có lỗi xảy ra từ máy chủ.";
-                client.notifySystemMessage("[LỖI] " + reason);
+            case LOGIN_FAILED:
+            case REGISTER_FAILED:
+            case ERROR:
+                client.notifySystemMessage("[LỖI] " + packet.getContent());
                 break;
 
-            case "SYSTEM":
-            case "INFO":
-                if (parts.length >= 2) {
-                    client.notifySystemMessage(parts[1]);
-                }
+            case SYSTEM:
+                client.notifySystemMessage(packet.getContent());
                 break;
 
             default:
-                client.notifySystemMessage(message);
+                if (packet.getContent() != null && !packet.getContent().isEmpty()) {
+                    client.notifySystemMessage(packet.getContent());
+                }
                 break;
         }
+    }
+
+    private void parseFriendList(String content) {
+        List<FriendItem> list = new ArrayList<>();
+        if (content != null && !content.trim().isEmpty()) {
+            for (String entry : content.split(";")) {
+                String[] parts = entry.split(",", -1);
+                if (parts.length >= 3) {
+                    String username = parts[0].trim();
+                    String displayName = parts[1].trim();
+                    String status = parts[2].trim();
+                    boolean isOnline = "ONLINE".equalsIgnoreCase(status);
+                    list.add(new FriendItem(username, displayName, status, isOnline));
+                }
+            }
+        }
+        client.notifyFriendList(list);
+    }
+
+    private void parsePendingRequests(String content) {
+        List<String> list = new ArrayList<>();
+        if (content != null && !content.trim().isEmpty()) {
+            for (String u : content.split(",")) {
+                String trimmed = u.trim();
+                if (!trimmed.isEmpty()) {
+                    list.add(trimmed);
+                }
+            }
+        }
+        client.notifyPendingRequests(list);
+    }
+
+    private void parseUserSearchResult(String content) {
+        List<SearchUserItem> list = new ArrayList<>();
+        if (content != null && !content.trim().isEmpty()) {
+            for (String entry : content.split(";")) {
+                String[] parts = entry.split(",", -1);
+                if (parts.length >= 3) {
+                    list.add(new SearchUserItem(parts[0].trim(), parts[1].trim(), parts[2].trim()));
+                }
+            }
+        }
+        client.notifyUserSearchResult(list);
+    }
+
+    private void parseUserList(String userString) {
+        List<String> users = new ArrayList<>();
+        if (userString != null && !userString.isEmpty()) {
+            for (String u : userString.split(",")) {
+                String trimmed = u.trim();
+                if (!trimmed.isEmpty()) {
+                    users.add(trimmed);
+                }
+            }
+        }
+        client.notifyUserList(users);
+    }
+
+    private void parseRoomList(String roomString) {
+        List<String> rooms = new ArrayList<>();
+        if (roomString != null && !roomString.isEmpty()) {
+            for (String r : roomString.split(",")) {
+                String trimmed = r.trim();
+                if (!trimmed.isEmpty()) {
+                    rooms.add(trimmed);
+                }
+            }
+        }
+        client.notifyRoomList(rooms);
+    }
+
+    private void parseHistoryResponse(String target, String content) {
+        List<ChatClient.ChatMessageItem> list = new ArrayList<>();
+        if (content != null && !content.trim().isEmpty()) {
+            for (String itemStr : content.split(";;")) {
+                String[] parts = itemStr.split("::", -1);
+                if (parts.length >= 9) {
+                    String uuid = parts[0];
+                    String sender = parts[1];
+                    String recipient = parts[2];
+                    String text = parts[3];
+                    String replyTo = parts[4];
+                    boolean isEdited = "1".equals(parts[5]);
+                    boolean isRevoked = "1".equals(parts[6]);
+                    String reactions = parts[7];
+                    long timestamp = 0;
+                    try { timestamp = Long.parseLong(parts[8]); } catch (NumberFormatException ignored) {}
+                    list.add(new ChatClient.ChatMessageItem(uuid, sender, recipient, text, replyTo, isEdited, isRevoked, reactions, timestamp));
+                }
+            }
+        }
+        client.notifyHistoryLoaded(target, list);
     }
 
     public void stopListening() {
