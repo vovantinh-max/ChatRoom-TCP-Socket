@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "ChatServer (Messenger Server)",
+            "request": "launch",
+            "mainClass": "server.ChatServer",
+            "classPaths": [
+                "${workspaceFolder}",
+                "${workspaceFolder}/lib/sqlite-jdbc-3.47.1.0.jar"
+            ]
+        },
+        {
+            "type": "java",
+            "name": "LoginFrame (Messenger Client)",
+            "request": "launch",
+            "mainClass": "client.ui.LoginFrame",
+            "classPaths": [
+                "${workspaceFolder}",
+                "${workspaceFolder}/lib/sqlite-jdbc-3.47.1.0.jar"
+            ]
+        }
+    ]
+}

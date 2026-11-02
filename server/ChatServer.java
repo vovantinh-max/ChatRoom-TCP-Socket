@@ -53,7 +53,11 @@ public class ChatServer {
             startWatchdog();
 
             if (serverGUI != null) {
-                serverGUI.appendLog("✓ SQLite Database khởi tạo thành công tại: data/messenger.db");
+                if (databaseManager != null && databaseManager.isUsingMemoryFallback()) {
+                    serverGUI.appendLog("⚠ SQLite Driver chưa nạp. Tự động chạy In-Memory Fallback an toàn.");
+                } else {
+                    serverGUI.appendLog("✓ SQLite Database khởi tạo thành công tại: data/messenger.db");
+                }
             }
 
             return true;

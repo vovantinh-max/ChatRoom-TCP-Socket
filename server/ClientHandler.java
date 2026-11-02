@@ -81,7 +81,7 @@ public class ClientHandler implements Runnable {
                 processIncomingLine(line);
             }
 
-        } catch (IOException e) {
+        } catch (Throwable e) {
             if (socket != null && !socket.isClosed()) {
                 clientManager.logMessage(getTimestamp() + " [DISCONNECT] Client " + username + ": " + e.getMessage());
             }
@@ -108,68 +108,79 @@ public class ClientHandler implements Runnable {
 
             // ── XỬ LÝ ĐĂNG KÝ (REGISTER) ──────────────────────────────────────
             if (packet.getType() == Packet.Type.REGISTER) {
-                String regUser = packet.getSender() != null ? packet.getSender().trim() : "";
-                String regPass = packet.getContent() != null ? packet.getContent().trim() : "";
-                String regName = packet.getExtra() != null ? packet.getExtra().trim() : regUser;
+                try {
+                    String regUser = packet.getSender() != null ? packet.getSender().trim() : "";
+                    String regPass = packet.getContent() != null ? packet.getContent().trim() : "";
+                    String regName = packet.getExtra() != null ? packet.getExtra().trim() : regUser;
 
-                if (regUser.length() < 3 || regPass.length() < 4) {
-                    sendPacket(new Packet(Packet.Type.REGISTER_FAILED, "SERVER", "Tên đăng nhập tối thiểu 3 ký tự, mật khẩu tối thiểu 4 ký tự."));
-                    continue;
-                }
+                    if (regUser.length() < 3 || regPass.length() < 4) {
+                        sendPacket(new Packet(Packet.Type.REGISTER_FAILED, "SERVER", "Tên đăng nhập tối thiểu 3 ký tự, mật khẩu tối thiểu 4 ký tự."));
+                        continue;
+                    }
 
-                if (databaseManager.userExists(regUser)) {
-                    sendPacket(new Packet(Packet.Type.REGISTER_FAILED, "SERVER", "Tên tài khoản '" + regUser + "' đã được sử dụng."));
-                    continue;
-                }
+                    if (databaseManager.userExists(regUser)) {
+                        sendPacket(new Packet(Packet.Type.REGISTER_FAILED, "SERVER", "Tên tài khoản '" + regUser + "' đã được sử dụng."));
+                        continue;
+                    }
 
-                boolean created = databaseManager.registerUser(regUser, regPass, regName);
-                if (created) {
-                    clientManager.logMessage(getTimestamp() + " [REGISTER] Đã tạo tài khoản mới: " + regUser);
-                    sendPacket(new Packet(Packet.Type.REGISTER_SUCCESS, "SERVER", "Đăng ký thành công! Bạn có thể đăng nhập ngay."));
-                } else {
-                    sendPacket(new Packet(Packet.Type.REGISTER_FAILED, "SERVER", "Lỗi tạo tài khoản trong cơ sở dữ liệu."));
+                    boolean created = databaseManager.registerUser(regUser, regPass, regName);
+                    if (created) {
+                        clientManager.logMessage(getTimestamp() + " [REGISTER] Đã tạo tài khoản mới: " + regUser);
+                        sendPacket(new Packet(Packet.Type.REGISTER_SUCCESS, "SERVER", "Đăng ký thành công! Bạn có thể đăng nhập ngay."));
+                    } else {
+                        sendPacket(new Packet(Packet.Type.REGISTER_FAILED, "SERVER", "Lỗi tạo tài khoản trong cơ sở dữ liệu."));
+                    }
+                } catch (Throwable t) {
+                    System.err.println("[ClientHandler] Lỗi đăng ký: " + t.getMessage());
+                    sendPacket(new Packet(Packet.Type.REGISTER_FAILED, "SERVER", "Lỗi máy chủ: " + t.getMessage()));
                 }
                 continue;
             }
 
             // ── XỬ LÝ ĐĂNG NHẬP (LOGIN) ───────────────────────────────────────
             if (packet.getType() == Packet.Type.LOGIN) {
-                String reqUser = packet.getSender() != null ? packet.getSender().trim() : "";
-                String reqPass = packet.getContent() != null ? packet.getContent() : "";
+                try {
+                    String reqUser = packet.getSender() != null ? packet.getSender().trim() : "";
+                    String reqPass = packet.getContent() != null ? packet.getContent() : "";
 
-                if (reqUser.isEmpty()) {
-                    sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Username không hợp lệ."));
-                    return false;
-                }
+                    if (reqUser.isEmpty()) {
+                        sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Username không hợp lệ."));
+                        return false;
+                    }
 
-                if (clientManager.isUsernameTaken(reqUser)) {
-                    sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Tài khoản '" + reqUser + "' đang online trên thiết bị khác."));
-                    return false;
-                }
+                    if (clientManager.isUsernameTaken(reqUser)) {
+                        sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Tài khoản '" + reqUser + "' đang online trên thiết bị khác."));
+                        return false;
+                    }
 
-                // Kiểm tra Database
-                if (databaseManager.userExists(reqUser)) {
-                    // Nếu tài khoản đã có mật khẩu trong DB, kiểm tra mật khẩu
-                    if (reqPass != null && !reqPass.isEmpty()) {
-                        UserRecord auth = databaseManager.authenticate(reqUser, reqPass);
-                        if (auth == null) {
-                            sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Mật khẩu không chính xác."));
-                            continue;
+                    // Kiểm tra Database
+                    if (databaseManager.userExists(reqUser)) {
+                        // Nếu tài khoản đã có mật khẩu trong DB, kiểm tra mật khẩu
+                        if (reqPass != null && !reqPass.isEmpty()) {
+                            UserRecord auth = databaseManager.authenticate(reqUser, reqPass);
+                            if (auth == null) {
+                                sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Mật khẩu không chính xác."));
+                                continue;
+                            }
+                            this.displayName = auth.displayName();
+                        } else {
+                            // Khách đăng nhập không pass vào tài khoản đã tồn tại
+                            this.displayName = reqUser;
                         }
-                        this.displayName = auth.displayName();
                     } else {
-                        // Khách đăng nhập không pass vào tài khoản đã tồn tại
+                        // Tự động khởi tạo tài khoản nếu chưa có
+                        String defaultPass = (reqPass != null && !reqPass.isEmpty()) ? reqPass : "123456";
+                        databaseManager.registerUser(reqUser, defaultPass, reqUser);
                         this.displayName = reqUser;
                     }
-                } else {
-                    // Tự động khởi tạo tài khoản nếu chưa có
-                    String defaultPass = (reqPass != null && !reqPass.isEmpty()) ? reqPass : "123456";
-                    databaseManager.registerUser(reqUser, defaultPass, reqUser);
-                    this.displayName = reqUser;
-                }
 
-                this.username = reqUser;
-                break;
+                    this.username = reqUser;
+                    break;
+                } catch (Throwable t) {
+                    System.err.println("[ClientHandler] Lỗi đăng nhập: " + t.getMessage());
+                    sendPacket(new Packet(Packet.Type.LOGIN_FAILED, "SERVER", "Lỗi máy chủ: " + t.getMessage()));
+                    return false;
+                }
             }
         }
 
@@ -200,10 +211,11 @@ public class ClientHandler implements Runnable {
     }
 
     private void processIncomingLine(String line) {
-        Packet packet = Packet.fromRawString(line);
-        if (packet == null) return;
+        try {
+            Packet packet = Packet.fromRawString(line);
+            if (packet == null) return;
 
-        switch (packet.getType()) {
+            switch (packet.getType()) {
             case PING:
                 sendPacket(new Packet(Packet.Type.PONG, "SERVER", ""));
                 break;
@@ -307,6 +319,9 @@ public class ClientHandler implements Runnable {
 
             default:
                 break;
+        }
+        } catch (Throwable t) {
+            System.err.println("[ClientHandler] Lỗi khi xử lý gói tin từ " + username + ": " + t.getMessage());
         }
     }
 
