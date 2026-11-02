@@ -1,64 +1,135 @@
 package client.ui;
 
 import javax.swing.*;
+import javax.swing.border.AbstractBorder;
 import java.awt.*;
-import java.awt.event.FocusEvent;
-import java.awt.event.FocusListener;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.geom.RoundRectangle2D;
+import java.awt.event.*;
+import java.awt.geom.*;
+import java.awt.image.BufferedImage;
 
+/**
+ * UIUtils - Premium Design System
+ * Modern dark-themed chat application design system with glassmorphism elements.
+ */
 public class UIUtils {
 
-    public static final Color COLOR_PRIMARY = new Color(37, 99, 235);
-    public static final Color COLOR_PRIMARY_HOVER = new Color(29, 78, 216);
-    public static final Color COLOR_PRIMARY_LIGHT = new Color(239, 246, 255);
-    public static final Color COLOR_BACKGROUND = new Color(248, 250, 252);
-    public static final Color COLOR_SURFACE = Color.WHITE;
-    public static final Color COLOR_BORDER = new Color(226, 232, 240);
-    public static final Color COLOR_BORDER_FOCUS = new Color(59, 130, 246);
-    public static final Color COLOR_TEXT_MAIN = new Color(15, 23, 42);
-    public static final Color COLOR_TEXT_MUTED = new Color(100, 116, 139);
-    public static final Color COLOR_ONLINE = new Color(34, 197, 94);
-    public static final Color COLOR_DANGER = new Color(239, 68, 68);
+    // ─── Color Palette ───────────────────────────────────────────────────────────
+    // Dark background layers
+    public static final Color COLOR_BG_DARKEST   = new Color(10, 11, 15);
+    public static final Color COLOR_BG_DARK      = new Color(15, 17, 23);
+    public static final Color COLOR_BG_MEDIUM    = new Color(20, 22, 30);
+    public static final Color COLOR_BG_SIDEBAR   = new Color(17, 19, 26);
+
+    // Surface / card colors
+    public static final Color COLOR_SURFACE_1    = new Color(25, 27, 36);
+    public static final Color COLOR_SURFACE_2    = new Color(30, 33, 44);
+    public static final Color COLOR_SURFACE_3    = new Color(38, 41, 55);
+
+    // Primary brand colors (indigo/violet gradient feel)
+    public static final Color COLOR_PRIMARY      = new Color(99, 102, 241);   // Indigo-500
+    public static final Color COLOR_PRIMARY_HOVER= new Color(79, 82, 221);   // Indigo-600
+    public static final Color COLOR_PRIMARY_DARK = new Color(55, 58, 200);
+    public static final Color COLOR_PRIMARY_GLOW = new Color(99, 102, 241, 40);
+    public static final Color COLOR_PRIMARY_LIGHT= new Color(99, 102, 241, 18);
+
+    // Accent colors
+    public static final Color COLOR_ACCENT_VIOLET= new Color(139, 92, 246);  // Violet
+    public static final Color COLOR_ACCENT_CYAN  = new Color(6, 182, 212);   // Cyan
+    public static final Color COLOR_ACCENT_ROSE  = new Color(244, 63, 94);   // Rose
+
+    // Semantic colors
+    public static final Color COLOR_ONLINE       = new Color(34, 197, 94);   // Green-500
+    public static final Color COLOR_ONLINE_GLOW  = new Color(34, 197, 94, 50);
+    public static final Color COLOR_DANGER       = new Color(239, 68, 68);   // Red-500
     public static final Color COLOR_DANGER_HOVER = new Color(220, 38, 38);
+    public static final Color COLOR_WARNING      = new Color(245, 158, 11);  // Amber
 
-    public static final Color COLOR_MY_BUBBLE = new Color(37, 99, 235);
-    public static final Color COLOR_OTHER_BUBBLE = Color.WHITE;
-    public static final Color COLOR_PRIVATE_BG = new Color(250, 245, 255);
-    public static final Color COLOR_PRIVATE_BORDER = new Color(216, 180, 254);
-    public static final Color COLOR_PRIVATE_TEXT = new Color(126, 34, 206);
-    public static final Color COLOR_SYSTEM_PILL = new Color(241, 245, 249);
+    // Text hierarchy
+    public static final Color COLOR_TEXT_PRIMARY = new Color(237, 238, 248); // Near-white
+    public static final Color COLOR_TEXT_SECONDARY=new Color(160, 163, 190); // Muted blue-gray
+    public static final Color COLOR_TEXT_MUTED   = new Color(100, 103, 130); // Dim
+    public static final Color COLOR_TEXT_PLACEHOLDER = new Color(75, 78, 105);
 
-    public static final Font FONT_TITLE = new Font("Segoe UI", Font.BOLD, 18);
-    public static final Font FONT_HEADER = new Font("Segoe UI", Font.BOLD, 14);
-    public static final Font FONT_REGULAR = new Font("Segoe UI", Font.PLAIN, 14);
-    public static final Font FONT_BOLD = new Font("Segoe UI", Font.BOLD, 13);
-    public static final Font FONT_SMALL = new Font("Segoe UI", Font.PLAIN, 12);
-    public static final Font FONT_TINY = new Font("Segoe UI", Font.PLAIN, 11);
+    // Borders
+    public static final Color COLOR_BORDER       = new Color(45, 48, 65);
+    public static final Color COLOR_BORDER_LIGHT = new Color(55, 58, 80);
+    public static final Color COLOR_BORDER_FOCUS = new Color(99, 102, 241, 200);
 
+    // Message bubbles
+    public static final Color COLOR_MY_BUBBLE    = new Color(99, 102, 241);
+    public static final Color COLOR_OTHER_BUBBLE = new Color(30, 33, 44);
+    public static final Color COLOR_PRIVATE_BG   = new Color(28, 22, 45);
+    public static final Color COLOR_PRIVATE_BORDER= new Color(139, 92, 246, 120);
+    public static final Color COLOR_PRIVATE_TEXT = new Color(167, 139, 250); // Violet-400
+    public static final Color COLOR_SYSTEM_PILL  = new Color(25, 27, 40);
+
+    // Legacy aliases (kept for backward compat)
+    public static final Color COLOR_BACKGROUND   = COLOR_BG_DARK;
+    public static final Color COLOR_SURFACE      = COLOR_SURFACE_1;
+
+    // ─── Typography ───────────────────────────────────────────────────────────────
+    public static final Font FONT_DISPLAY   = new Font("Segoe UI", Font.BOLD, 26);
+    public static final Font FONT_TITLE     = new Font("Segoe UI", Font.BOLD, 18);
+    public static final Font FONT_HEADER    = new Font("Segoe UI", Font.BOLD, 15);
+    public static final Font FONT_SUBHEADER = new Font("Segoe UI", Font.BOLD, 13);
+    public static final Font FONT_REGULAR   = new Font("Segoe UI", Font.PLAIN, 14);
+    public static final Font FONT_BOLD      = new Font("Segoe UI", Font.BOLD, 13);
+    public static final Font FONT_SMALL     = new Font("Segoe UI", Font.PLAIN, 12);
+    public static final Font FONT_TINY      = new Font("Segoe UI", Font.PLAIN, 11);
+    public static final Font FONT_MONO      = new Font("Consolas", Font.PLAIN, 12);
+
+    // ─── Avatar color wheel ───────────────────────────────────────────────────────
     private static final Color[] AVATAR_COLORS = {
-        new Color(59, 130, 246),
-        new Color(16, 185, 129),
-        new Color(245, 158, 11),
-        new Color(236, 72, 153),
-        new Color(139, 92, 246),
-        new Color(6, 182, 212),
-        new Color(249, 115, 22),
-        new Color(20, 184, 166)
+        new Color(99,  102, 241),  // Indigo
+        new Color(6,   182, 212),  // Cyan
+        new Color(34,  197, 94),   // Green
+        new Color(245, 158, 11),   // Amber
+        new Color(244, 63,  94),   // Rose
+        new Color(139, 92,  246),  // Violet
+        new Color(236, 72,  153),  // Pink
+        new Color(20,  184, 166),  // Teal
+        new Color(249, 115, 22),   // Orange
+        new Color(59,  130, 246),  // Blue
     };
 
     public static Color getAvatarColor(String name) {
         if (name == null || name.isEmpty()) return AVATAR_COLORS[0];
-        int hash = Math.abs(name.hashCode());
-        return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+        return AVATAR_COLORS[Math.abs(name.hashCode()) % AVATAR_COLORS.length];
     }
 
+    // ─── Shadow utility ───────────────────────────────────────────────────────────
+    /**
+     * Draws a soft drop shadow behind a rounded rect. Call before painting content.
+     */
+    public static void drawSoftShadow(Graphics2D g2, int x, int y, int w, int h, int radius, Color shadowColor, int layers) {
+        for (int i = layers; i >= 1; i--) {
+            float alpha = 0.06f * i;
+            int offset = i * 2;
+            g2.setColor(new Color(shadowColor.getRed(), shadowColor.getGreen(), shadowColor.getBlue(),
+                    Math.min(255, (int)(alpha * 255))));
+            g2.fill(new RoundRectangle2D.Float(x - offset, y - offset, w + offset * 2, h + offset * 2, radius + offset, radius + offset));
+        }
+    }
+
+    // ─── Gradient paint utilities ─────────────────────────────────────────────────
+    public static GradientPaint verticalGradient(int y, int height, Color top, Color bottom) {
+        return new GradientPaint(0, y, top, 0, y + height, bottom);
+    }
+
+    // ─── AnimatedButton ───────────────────────────────────────────────────────────
+    /**
+     * Premium button with smooth press animation and glow effect.
+     */
     public static class ModernButton extends JButton {
-        private final Color normalColor;
-        private final Color hoverColor;
+        private Color normalColor;
+        private Color hoverColor;
         private boolean isHover = false;
+        private boolean isPressed = false;
         private int cornerRadius = 10;
+        private float glowAlpha = 0f;
+
+        // For animated glow
+        private Timer glowTimer;
 
         public ModernButton(String text, Color normalColor, Color hoverColor, Color textColor) {
             super(text);
@@ -70,20 +141,46 @@ public class UIUtils {
             setForeground(textColor);
             setFont(FONT_BOLD);
             setCursor(new Cursor(Cursor.HAND_CURSOR));
+            setOpaque(false);
 
             addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseEntered(MouseEvent e) {
+                @Override public void mouseEntered(MouseEvent e) {
                     isHover = true;
+                    startGlow(true);
                     repaint();
                 }
-
-                @Override
-                public void mouseExited(MouseEvent e) {
+                @Override public void mouseExited(MouseEvent e) {
                     isHover = false;
+                    isPressed = false;
+                    startGlow(false);
+                    repaint();
+                }
+                @Override public void mousePressed(MouseEvent e) {
+                    isPressed = true;
+                    repaint();
+                }
+                @Override public void mouseReleased(MouseEvent e) {
+                    isPressed = false;
                     repaint();
                 }
             });
+        }
+
+        private void startGlow(boolean in) {
+            if (glowTimer != null) glowTimer.stop();
+            glowTimer = new Timer(16, null);
+            glowTimer.addActionListener(e -> {
+                if (in) {
+                    glowAlpha = Math.min(1f, glowAlpha + 0.08f);
+                } else {
+                    glowAlpha = Math.max(0f, glowAlpha - 0.08f);
+                }
+                repaint();
+                if ((in && glowAlpha >= 1f) || (!in && glowAlpha <= 0f)) {
+                    glowTimer.stop();
+                }
+            });
+            glowTimer.start();
         }
 
         public void setCornerRadius(int radius) {
@@ -96,47 +193,83 @@ public class UIUtils {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-            if (!isEnabled()) {
-                g2.setColor(new Color(203, 213, 225));
-            } else if (isHover) {
-                g2.setColor(hoverColor);
-            } else {
-                g2.setColor(normalColor);
+            int w = getWidth(), h = getHeight();
+            RoundRectangle2D shape = new RoundRectangle2D.Float(0, 0, w, h, cornerRadius, cornerRadius);
+
+            // Glow ring
+            if (glowAlpha > 0.01f && isEnabled()) {
+                Color gc = normalColor;
+                int glowSize = 6;
+                for (int i = glowSize; i >= 1; i--) {
+                    float a = glowAlpha * 0.04f * i;
+                    g2.setColor(new Color(gc.getRed(), gc.getGreen(), gc.getBlue(), Math.min(255, (int)(a * 255))));
+                    g2.fill(new RoundRectangle2D.Float(-i, -i, w + i * 2, h + i * 2, cornerRadius + i, cornerRadius + i));
+                }
             }
 
-            g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), cornerRadius, cornerRadius));
-            g2.dispose();
+            // Button body
+            if (!isEnabled()) {
+                g2.setColor(new Color(40, 43, 58));
+            } else if (isPressed) {
+                g2.setColor(normalColor.darker());
+            } else if (isHover) {
+                // Gradient on hover
+                g2.setPaint(new GradientPaint(0, 0, hoverColor, 0, h, normalColor));
+            } else {
+                g2.setPaint(new GradientPaint(0, 0, normalColor, 0, h, normalColor.darker()));
+            }
+            g2.fill(shape);
 
+            // Top highlight line (glass effect)
+            if (isEnabled()) {
+                g2.setColor(new Color(255, 255, 255, 25));
+                g2.setStroke(new BasicStroke(1f));
+                g2.draw(new RoundRectangle2D.Float(1, 1, w - 2, h / 2f, cornerRadius, cornerRadius));
+            }
+
+            g2.dispose();
             super.paintComponent(g);
         }
     }
 
+    // ─── ModernTextField ─────────────────────────────────────────────────────────
     public static class ModernTextField extends JTextField {
         private String placeholder = "";
         private boolean isFocused = false;
         private int cornerRadius = 10;
+        private float focusAnim = 0f;
+        private Timer focusTimer;
 
         public ModernTextField(String placeholder) {
             this.placeholder = placeholder;
             setFont(FONT_REGULAR);
-            setForeground(COLOR_TEXT_MAIN);
+            setForeground(COLOR_TEXT_PRIMARY);
             setCaretColor(COLOR_PRIMARY);
             setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
+            setBorder(BorderFactory.createEmptyBorder(10, 16, 10, 16));
+            setBackground(COLOR_SURFACE_2);
 
             addFocusListener(new FocusListener() {
-                @Override
-                public void focusGained(FocusEvent e) {
+                @Override public void focusGained(FocusEvent e) {
                     isFocused = true;
-                    repaint();
+                    animateFocus(true);
                 }
-
-                @Override
-                public void focusLost(FocusEvent e) {
+                @Override public void focusLost(FocusEvent e) {
                     isFocused = false;
-                    repaint();
+                    animateFocus(false);
                 }
             });
+        }
+
+        private void animateFocus(boolean in) {
+            if (focusTimer != null) focusTimer.stop();
+            focusTimer = new Timer(16, null);
+            focusTimer.addActionListener(e -> {
+                focusAnim = in ? Math.min(1f, focusAnim + 0.1f) : Math.max(0f, focusAnim - 0.1f);
+                repaint();
+                if ((in && focusAnim >= 1f) || (!in && focusAnim <= 0f)) focusTimer.stop();
+            });
+            focusTimer.start();
         }
 
         public void setPlaceholder(String placeholder) {
@@ -149,39 +282,139 @@ public class UIUtils {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-            g2.setColor(COLOR_SURFACE);
-            g2.fill(new RoundRectangle2D.Float(1, 1, getWidth() - 2, getHeight() - 2, cornerRadius, cornerRadius));
+            int w = getWidth(), h = getHeight();
 
-            if (isFocused) {
-                g2.setColor(COLOR_BORDER_FOCUS);
-                g2.setStroke(new BasicStroke(1.8f));
+            // Background
+            g2.setColor(COLOR_SURFACE_2);
+            g2.fill(new RoundRectangle2D.Float(1, 1, w - 2, h - 2, cornerRadius, cornerRadius));
+
+            // Border
+            if (focusAnim > 0.01f) {
+                // Animated focus glow
+                Color bc = blend(COLOR_BORDER, COLOR_BORDER_FOCUS, focusAnim);
+                g2.setColor(bc);
+                g2.setStroke(new BasicStroke(1.5f));
             } else {
                 g2.setColor(COLOR_BORDER);
-                g2.setStroke(new BasicStroke(1.2f));
+                g2.setStroke(new BasicStroke(1f));
             }
-            g2.draw(new RoundRectangle2D.Float(1, 1, getWidth() - 3, getHeight() - 3, cornerRadius, cornerRadius));
+            g2.draw(new RoundRectangle2D.Float(1, 1, w - 3, h - 3, cornerRadius, cornerRadius));
+
+            // Subtle glow when focused
+            if (focusAnim > 0.01f) {
+                int alpha = (int)(focusAnim * 40);
+                g2.setColor(new Color(COLOR_PRIMARY.getRed(), COLOR_PRIMARY.getGreen(), COLOR_PRIMARY.getBlue(), alpha));
+                g2.setStroke(new BasicStroke(3f));
+                g2.draw(new RoundRectangle2D.Float(0, 0, w - 1, h - 1, cornerRadius + 1, cornerRadius + 1));
+            }
 
             g2.dispose();
             super.paintComponent(g);
 
-            if (getText().isEmpty() && !isFocused && placeholder != null && !placeholder.isEmpty()) {
-                Graphics2D gText = (Graphics2D) g.create();
-                gText.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                gText.setColor(COLOR_TEXT_MUTED);
-                gText.setFont(getFont());
-                Insets insets = getInsets();
-                FontMetrics fm = gText.getFontMetrics();
-                int y = (getHeight() - fm.getHeight()) / 2 + fm.getAscent();
-                gText.drawString(placeholder, insets.left, y);
-                gText.dispose();
+            // Placeholder
+            if (getText().isEmpty() && placeholder != null && !placeholder.isEmpty()) {
+                Graphics2D gp = (Graphics2D) g.create();
+                gp.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB);
+                gp.setColor(COLOR_TEXT_PLACEHOLDER);
+                gp.setFont(getFont());
+                Insets ins = getInsets();
+                FontMetrics fm = gp.getFontMetrics();
+                int y = (h - fm.getHeight()) / 2 + fm.getAscent();
+                gp.drawString(placeholder, ins.left, y);
+                gp.dispose();
             }
         }
     }
 
+    // ─── ModernPasswordField ─────────────────────────────────────────────────────
+    public static class ModernPasswordField extends JPasswordField {
+        private String placeholder = "";
+        private boolean isFocused = false;
+        private int cornerRadius = 10;
+        private float focusAnim = 0f;
+        private Timer focusTimer;
+
+        public ModernPasswordField(String placeholder) {
+            this.placeholder = placeholder;
+            setFont(FONT_REGULAR);
+            setForeground(COLOR_TEXT_PRIMARY);
+            setCaretColor(COLOR_PRIMARY);
+            setOpaque(false);
+            setBorder(BorderFactory.createEmptyBorder(10, 16, 10, 16));
+            setEchoChar('●');
+
+            addFocusListener(new FocusListener() {
+                @Override public void focusGained(FocusEvent e) {
+                    isFocused = true;
+                    animateFocus(true);
+                }
+                @Override public void focusLost(FocusEvent e) {
+                    isFocused = false;
+                    animateFocus(false);
+                }
+            });
+        }
+
+        private void animateFocus(boolean in) {
+            if (focusTimer != null) focusTimer.stop();
+            focusTimer = new Timer(16, null);
+            focusTimer.addActionListener(e -> {
+                focusAnim = in ? Math.min(1f, focusAnim + 0.1f) : Math.max(0f, focusAnim - 0.1f);
+                repaint();
+                if ((in && focusAnim >= 1f) || (!in && focusAnim <= 0f)) focusTimer.stop();
+            });
+            focusTimer.start();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int w = getWidth(), h = getHeight();
+
+            g2.setColor(COLOR_SURFACE_2);
+            g2.fill(new RoundRectangle2D.Float(1, 1, w - 2, h - 2, cornerRadius, cornerRadius));
+
+            if (focusAnim > 0.01f) {
+                Color bc = blend(COLOR_BORDER, COLOR_BORDER_FOCUS, focusAnim);
+                g2.setColor(bc);
+                g2.setStroke(new BasicStroke(1.5f));
+            } else {
+                g2.setColor(COLOR_BORDER);
+                g2.setStroke(new BasicStroke(1f));
+            }
+            g2.draw(new RoundRectangle2D.Float(1, 1, w - 3, h - 3, cornerRadius, cornerRadius));
+
+            if (focusAnim > 0.01f) {
+                int alpha = (int)(focusAnim * 40);
+                g2.setColor(new Color(COLOR_PRIMARY.getRed(), COLOR_PRIMARY.getGreen(), COLOR_PRIMARY.getBlue(), alpha));
+                g2.setStroke(new BasicStroke(3f));
+                g2.draw(new RoundRectangle2D.Float(0, 0, w - 1, h - 1, cornerRadius + 1, cornerRadius + 1));
+            }
+
+            g2.dispose();
+            super.paintComponent(g);
+
+            if (getPassword().length == 0 && placeholder != null && !placeholder.isEmpty()) {
+                Graphics2D gp = (Graphics2D) g.create();
+                gp.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB);
+                gp.setColor(COLOR_TEXT_PLACEHOLDER);
+                gp.setFont(getFont());
+                Insets ins = getInsets();
+                FontMetrics fm = gp.getFontMetrics();
+                int y = (h - fm.getHeight()) / 2 + fm.getAscent();
+                gp.drawString(placeholder, ins.left, y);
+                gp.dispose();
+            }
+        }
+    }
+
+    // ─── RoundedPanel ─────────────────────────────────────────────────────────────
     public static class RoundedPanel extends JPanel {
         private Color backgroundColor;
         private Color borderColor;
-        private int cornerRadius = 12;
+        private int cornerRadius;
+        private boolean drawShadow = false;
 
         public RoundedPanel(Color bg, Color border, int radius) {
             this.backgroundColor = bg;
@@ -190,20 +423,18 @@ public class UIUtils {
             setOpaque(false);
         }
 
-        public void setBgColor(Color color) {
-            this.backgroundColor = color;
-            repaint();
-        }
-
-        public void setBorderColor(Color color) {
-            this.borderColor = color;
-            repaint();
-        }
+        public void setDrawShadow(boolean v) { this.drawShadow = v; }
+        public void setBgColor(Color c)      { this.backgroundColor = c; repaint(); }
+        public void setBorderColor(Color c)  { this.borderColor = c; repaint(); }
 
         @Override
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            if (drawShadow) {
+                drawSoftShadow(g2, 0, 0, getWidth(), getHeight(), cornerRadius, Color.BLACK, 5);
+            }
 
             if (backgroundColor != null) {
                 g2.setColor(backgroundColor);
@@ -212,12 +443,172 @@ public class UIUtils {
 
             if (borderColor != null) {
                 g2.setColor(borderColor);
-                g2.setStroke(new BasicStroke(1.2f));
-                g2.draw(new RoundRectangle2D.Float(1, 1, getWidth() - 2, getHeight() - 2, cornerRadius, cornerRadius));
+                g2.setStroke(new BasicStroke(1f));
+                g2.draw(new RoundRectangle2D.Float(0.5f, 0.5f, getWidth() - 1, getHeight() - 1, cornerRadius, cornerRadius));
             }
 
             g2.dispose();
             super.paintComponent(g);
         }
+    }
+
+    // ─── GlassPanel ──────────────────────────────────────────────────────────────
+    /**
+     * Glassmorphism-style panel with translucent background and subtle border.
+     */
+    public static class GlassPanel extends JPanel {
+        private int cornerRadius;
+        private Color glassColor;
+        private Color borderColor;
+
+        public GlassPanel(Color glassColor, Color borderColor, int radius) {
+            this.glassColor = glassColor;
+            this.borderColor = borderColor;
+            this.cornerRadius = radius;
+            setOpaque(false);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            // Shadow
+            drawSoftShadow(g2, 4, 6, getWidth() - 8, getHeight() - 8, cornerRadius, Color.BLACK, 8);
+
+            // Glass body
+            g2.setColor(glassColor);
+            g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), cornerRadius, cornerRadius));
+
+            // Top highlight (glass shimmer)
+            GradientPaint shimmer = new GradientPaint(0, 0, new Color(255, 255, 255, 12), 0, getHeight() / 2f, new Color(255, 255, 255, 3));
+            g2.setPaint(shimmer);
+            g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight() / 2f, cornerRadius, cornerRadius));
+
+            // Border
+            if (borderColor != null) {
+                g2.setColor(borderColor);
+                g2.setStroke(new BasicStroke(1f));
+                g2.draw(new RoundRectangle2D.Float(0.5f, 0.5f, getWidth() - 1, getHeight() - 1, cornerRadius, cornerRadius));
+            }
+
+            g2.dispose();
+            super.paintComponent(g);
+        }
+    }
+
+    // ─── Avatar ─────────────────────────────────────────────────────────────────
+    public static JPanel createAvatarPanel(String name, int size) {
+        Color color = getAvatarColor(name);
+        String letter = (name != null && !name.isEmpty()) ? name.substring(0, 1).toUpperCase() : "?";
+
+        JPanel panel = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB);
+
+                // Subtle glow behind avatar
+                g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 40));
+                g2.fillOval(-2, -2, size + 4, size + 4);
+
+                // Avatar circle
+                g2.setColor(color);
+                g2.fillOval(0, 0, size, size);
+
+                // Inner shine
+                g2.setColor(new Color(255, 255, 255, 30));
+                g2.fillOval(size / 6, size / 10, size / 3, size / 4);
+
+                // Letter
+                g2.setColor(Color.WHITE);
+                Font f = new Font("Segoe UI", Font.BOLD, size / 2 + 1);
+                g2.setFont(f);
+                FontMetrics fm = g2.getFontMetrics();
+                int x = (size - fm.stringWidth(letter)) / 2;
+                int y = (size - fm.getHeight()) / 2 + fm.getAscent();
+                g2.drawString(letter, x, y);
+                g2.dispose();
+            }
+        };
+        panel.setOpaque(false);
+        panel.setPreferredSize(new Dimension(size + 4, size + 4));
+        panel.setMaximumSize(new Dimension(size + 4, size + 4));
+        panel.setMinimumSize(new Dimension(size + 4, size + 4));
+        return panel;
+    }
+
+    // ─── Online badge dot ────────────────────────────────────────────────────────
+    public static JPanel createOnlineDot(int size) {
+        JPanel dot = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                // Glow
+                g2.setColor(COLOR_ONLINE_GLOW);
+                g2.fillOval(0, 0, size, size);
+                // Core
+                int pad = 2;
+                g2.setColor(COLOR_ONLINE);
+                g2.fillOval(pad, pad, size - pad * 2, size - pad * 2);
+                g2.dispose();
+            }
+        };
+        dot.setOpaque(false);
+        dot.setPreferredSize(new Dimension(size, size));
+        dot.setMaximumSize(new Dimension(size, size));
+        return dot;
+    }
+
+    // ─── Separator line ──────────────────────────────────────────────────────────
+    public static JSeparator createSeparator() {
+        JSeparator sep = new JSeparator();
+        sep.setForeground(COLOR_BORDER);
+        sep.setBackground(COLOR_BORDER);
+        sep.setMaximumSize(new Dimension(Integer.MAX_VALUE, 1));
+        return sep;
+    }
+
+    // ─── Color blend utility ─────────────────────────────────────────────────────
+    public static Color blend(Color a, Color b, float t) {
+        t = Math.max(0, Math.min(1, t));
+        int r = (int)(a.getRed()   + (b.getRed()   - a.getRed())   * t);
+        int g = (int)(a.getGreen() + (b.getGreen() - a.getGreen()) * t);
+        int bl= (int)(a.getBlue()  + (b.getBlue()  - a.getBlue())  * t);
+        int al= (int)(a.getAlpha() + (b.getAlpha() - a.getAlpha()) * t);
+        return new Color(r, g, bl, al);
+    }
+
+    // ─── Setup global LAF tweaks ─────────────────────────────────────────────────
+    public static void applyGlobalDefaults() {
+        UIManager.put("Panel.background", COLOR_BG_DARK);
+        UIManager.put("ScrollPane.background", COLOR_BG_DARK);
+        UIManager.put("Viewport.background", COLOR_BG_DARK);
+        UIManager.put("List.background", COLOR_SURFACE_1);
+        UIManager.put("List.foreground", COLOR_TEXT_PRIMARY);
+        UIManager.put("List.selectionBackground", COLOR_PRIMARY_LIGHT);
+        UIManager.put("List.selectionForeground", COLOR_TEXT_PRIMARY);
+        UIManager.put("ScrollBar.thumb", COLOR_SURFACE_3);
+        UIManager.put("ScrollBar.thumbHighlight", COLOR_BORDER_LIGHT);
+        UIManager.put("ScrollBar.thumbShadow", COLOR_SURFACE_2);
+        UIManager.put("ScrollBar.track", COLOR_SURFACE_1);
+        UIManager.put("ScrollBar.width", 6);
+        UIManager.put("ComboBox.background", COLOR_SURFACE_2);
+        UIManager.put("ComboBox.foreground", COLOR_TEXT_PRIMARY);
+        UIManager.put("ComboBox.selectionBackground", COLOR_PRIMARY);
+        UIManager.put("ComboBox.selectionForeground", Color.WHITE);
+        UIManager.put("ComboBox.font", FONT_SMALL);
+        UIManager.put("OptionPane.background", COLOR_SURFACE_1);
+        UIManager.put("OptionPane.messageForeground", COLOR_TEXT_PRIMARY);
+        UIManager.put("TextField.background", COLOR_SURFACE_2);
+        UIManager.put("TextField.foreground", COLOR_TEXT_PRIMARY);
+        UIManager.put("TextField.caretForeground", COLOR_PRIMARY);
+        UIManager.put("Label.foreground", COLOR_TEXT_PRIMARY);
+        UIManager.put("Button.background", COLOR_SURFACE_3);
+        UIManager.put("Button.foreground", COLOR_TEXT_PRIMARY);
+        UIManager.put("TitledBorder.titleColor", COLOR_TEXT_SECONDARY);
+        UIManager.put("SplitPane.background", COLOR_BG_DARK);
+        UIManager.put("SplitPaneDivider.background", COLOR_BORDER);
     }
 }

@@ -6,244 +6,371 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.*;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
+/**
+ * ChatFrame — Premium dark-theme chat window.
+ * Features: modern sidebar, bubble messages, emoji quick-panel, glassmorphism elements.
+ */
 public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
 
-    private final ChatClient client;
-    private final LoginFrame loginFrame;
+    private final ChatClient  client;
+    private final LoginFrame  loginFrame;
 
-    private JPanel messagesBox;
-    private JScrollPane chatScroll;
+    private JPanel               messagesBox;
+    private JScrollPane          chatScroll;
     private UIUtils.ModernTextField txtInput;
-    private UIUtils.ModernButton btnSend;
+    private UIUtils.ModernButton    btnSend;
 
     private DefaultListModel<String> userListModel;
-    private JList<String> userList;
-    private JLabel lblOnlineBadge;
+    private JList<String>            userList;
+    private JLabel                   lblOnlineBadge;
 
     private DefaultListModel<String> groupListModel;
-    private JList<String> groupList;
-    private JLabel lblGroupCountBadge;
+    private JList<String>            groupList;
+    private JLabel                   lblGroupCountBadge;
     private String currentRoomName = "General";
 
     private CardLayout sidebarCardLayout;
-    private JPanel sidebarCardPanel;
-    private JButton btnTabMembers;
-    private JButton btnTabGroups;
+    private JPanel     sidebarCardPanel;
+    private JButton    btnTabMembers;
+    private JButton    btnTabGroups;
 
-    private JLabel lblServerInfo;
-    private JComboBox<String> cbRecipient;
-    private JPanel recipientStatusPanel;
-    private JLabel lblCurrentRecipient;
-    private JButton btnCancelPrivate;
+    private JLabel               lblServerInfo;
+    private JComboBox<String>    cbRecipient;
+    private JPanel               recipientStatusPanel;
+    private JLabel               lblCurrentRecipient;
+    private JButton              btnCancelPrivate;
     private final String ALL_USERS = "Tất cả (Mọi người)";
 
     private final DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH:mm");
 
-    public ChatFrame(ChatClient client, LoginFrame loginFrame) {
-        this.client = client;
-        this.loginFrame = loginFrame;
+    // ── Toast notification ───────────────────────────────────────────────────────
+    private JPanel  toastPanel;
+    private JLabel  toastLabel;
+    private Timer   toastHideTimer;
+    private float   toastAlpha = 0f;
+    private Timer   toastFadeTimer;
 
+    public ChatFrame(ChatClient client, LoginFrame loginFrame) {
+        this.client     = client;
+        this.loginFrame = loginFrame;
         this.client.setEventListener(this);
         initUI();
     }
 
+    // ════════════════════════════════════════════════════════════════════════════
+    //  UI CONSTRUCTION
+    // ════════════════════════════════════════════════════════════════════════════
     private void initUI() {
-        setTitle("Phòng Chat TCP - [" + client.getUsername() + "]");
+        setTitle("ChatRoom TCP  ·  " + client.getUsername());
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setSize(980, 660);
-        setMinimumSize(new Dimension(800, 520));
+        setSize(1060, 700);
+        setMinimumSize(new Dimension(860, 560));
         setLocationRelativeTo(null);
+        UIUtils.applyGlobalDefaults();
 
         addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosing(WindowEvent e) {
-                performLogout();
-            }
+            @Override public void windowClosing(WindowEvent e) { performLogout(); }
         });
 
-        JPanel rootPanel = new JPanel(new BorderLayout());
-        rootPanel.setBackground(UIUtils.COLOR_BACKGROUND);
+        // ── Root layered pane (for toast overlay) ────────────────────────────
+        JLayeredPane layeredRoot = new JLayeredPane();
+        layeredRoot.setLayout(null);
 
-        JPanel headerPanel = new JPanel(new BorderLayout(15, 0));
-        headerPanel.setBackground(UIUtils.COLOR_SURFACE);
-        headerPanel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 0, 1, 0, UIUtils.COLOR_BORDER),
-            new EmptyBorder(10, 20, 10, 20)
-        ));
+        JPanel mainPanel = new JPanel(new BorderLayout());
+        mainPanel.setBackground(UIUtils.COLOR_BG_DARK);
 
-        JPanel userInfoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
-        userInfoPanel.setOpaque(false);
+        // ── Header ──────────────────────────────────────────────────────────
+        mainPanel.add(buildHeader(), BorderLayout.NORTH);
 
-        JPanel myAvatar = createAvatarComponent(client.getUsername(), 38);
-        userInfoPanel.add(myAvatar);
+        // ── Centre split ─────────────────────────────────────────────────────
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+        split.setResizeWeight(0.76);
+        split.setContinuousLayout(true);
+        split.setBorder(null);
+        split.setDividerSize(1);
+        split.setBackground(UIUtils.COLOR_BORDER);
 
-        JPanel userTextCol = new JPanel();
-        userTextCol.setLayout(new BoxLayout(userTextCol, BoxLayout.Y_AXIS));
-        userTextCol.setOpaque(false);
+        split.setLeftComponent(buildChatArea());
+        split.setRightComponent(buildSidebar());
+        mainPanel.add(split, BorderLayout.CENTER);
 
-        JLabel lblName = new JLabel(client.getUsername());
-        lblName.setFont(UIUtils.FONT_TITLE);
-        lblName.setForeground(UIUtils.COLOR_TEXT_MAIN);
-        userTextCol.add(lblName);
+        // ── Input bar ────────────────────────────────────────────────────────
+        mainPanel.add(buildInputBar(), BorderLayout.SOUTH);
 
-        lblServerInfo = new JLabel("● Đang trực tuyến  |  Nhóm: " + currentRoomName + "  |  Server: " + client.getServerHost() + ":" + client.getServerPort());
-        lblServerInfo.setFont(UIUtils.FONT_TINY);
-        lblServerInfo.setForeground(UIUtils.COLOR_ONLINE);
-        userTextCol.add(lblServerInfo);
+        // Put main panel into layered pane
+        layeredRoot.add(mainPanel, JLayeredPane.DEFAULT_LAYER);
+        mainPanel.setBounds(0, 0, 1060, 700);
 
-        userInfoPanel.add(userTextCol);
-        headerPanel.add(userInfoPanel, BorderLayout.WEST);
-
-        UIUtils.ModernButton btnLogout = new UIUtils.ModernButton(
-            "Đăng xuất",
-            new Color(254, 242, 242),
-            UIUtils.COLOR_DANGER,
-            UIUtils.COLOR_DANGER
-        );
-        btnLogout.setPreferredSize(new Dimension(100, 34));
-        btnLogout.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseEntered(MouseEvent e) {
-                btnLogout.setForeground(Color.WHITE);
-            }
-            @Override
-            public void mouseExited(MouseEvent e) {
-                btnLogout.setForeground(UIUtils.COLOR_DANGER);
-            }
-        });
-        btnLogout.addActionListener(e -> performLogout());
-        headerPanel.add(btnLogout, BorderLayout.EAST);
-
-        rootPanel.add(headerPanel, BorderLayout.NORTH);
-
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-        splitPane.setResizeWeight(0.74);
-        splitPane.setContinuousLayout(true);
-        splitPane.setBorder(null);
-        splitPane.setDividerSize(1);
-
-        messagesBox = new JPanel();
-        messagesBox.setLayout(new BoxLayout(messagesBox, BoxLayout.Y_AXIS));
-        messagesBox.setBackground(UIUtils.COLOR_BACKGROUND);
-        messagesBox.setBorder(new EmptyBorder(15, 18, 15, 18));
-
-        chatScroll = new JScrollPane(messagesBox);
-        chatScroll.setBorder(null);
-        chatScroll.getVerticalScrollBar().setUnitIncrement(16);
-        chatScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        chatScroll.setBackground(UIUtils.COLOR_BACKGROUND);
-        splitPane.setLeftComponent(chatScroll);
-
-        JPanel sidebarPanel = new JPanel(new BorderLayout());
-        sidebarPanel.setBackground(UIUtils.COLOR_SURFACE);
-        sidebarPanel.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, UIUtils.COLOR_BORDER));
-
-        JPanel sidebarHeader = new JPanel(new GridLayout(1, 2, 8, 0));
-        sidebarHeader.setOpaque(false);
-        sidebarHeader.setBorder(new EmptyBorder(12, 14, 12, 14));
-
-        btnTabMembers = new JButton("Thành viên");
-        btnTabMembers.setFont(UIUtils.FONT_BOLD);
-        btnTabMembers.setFocusPainted(false);
-        btnTabMembers.setCursor(new Cursor(Cursor.HAND_CURSOR));
-
-        btnTabGroups = new JButton("Nhóm chat");
-        btnTabGroups.setFont(UIUtils.FONT_BOLD);
-        btnTabGroups.setFocusPainted(false);
-        btnTabGroups.setCursor(new Cursor(Cursor.HAND_CURSOR));
-
-        styleTabButton(btnTabMembers, true);
-        styleTabButton(btnTabGroups, false);
-
-        sidebarHeader.add(btnTabMembers);
-        sidebarHeader.add(btnTabGroups);
-        sidebarPanel.add(sidebarHeader, BorderLayout.NORTH);
-
-        sidebarCardLayout = new CardLayout();
-        sidebarCardPanel = new JPanel(sidebarCardLayout);
-        sidebarCardPanel.setOpaque(false);
-
-        JPanel membersPanel = new JPanel(new BorderLayout());
-        membersPanel.setOpaque(false);
-
-        JPanel membersSubHeader = new JPanel(new BorderLayout());
-        membersSubHeader.setOpaque(false);
-        membersSubHeader.setBorder(new EmptyBorder(0, 16, 8, 16));
-
-        lblOnlineBadge = new JLabel("1 trực tuyến");
-        lblOnlineBadge.setFont(UIUtils.FONT_TINY);
-        lblOnlineBadge.setForeground(UIUtils.COLOR_ONLINE);
-        membersSubHeader.add(lblOnlineBadge, BorderLayout.WEST);
-        membersPanel.add(membersSubHeader, BorderLayout.NORTH);
-
-        userListModel = new DefaultListModel<>();
-        userListModel.addElement(client.getUsername());
-
-        userList = new JList<>(userListModel);
-        userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        userList.setCellRenderer(new UserCellRenderer());
-        userList.setBackground(UIUtils.COLOR_SURFACE);
-        userList.setBorder(new EmptyBorder(4, 8, 4, 8));
-
-        userList.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2) {
-                    selectUserForPrivateChat();
+        // Resize listener to keep panels full-size
+        layeredRoot.addComponentListener(new ComponentAdapter() {
+            @Override public void componentResized(ComponentEvent e) {
+                Dimension sz = layeredRoot.getSize();
+                mainPanel.setBounds(0, 0, sz.width, sz.height);
+                if (toastPanel != null) {
+                    int tw = 340, th = 48;
+                    toastPanel.setBounds((sz.width - tw) / 2, sz.height - th - 24, tw, th);
                 }
             }
         });
 
-        JScrollPane userScroll = new JScrollPane(userList);
-        userScroll.setBorder(null);
-        userScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        membersPanel.add(userScroll, BorderLayout.CENTER);
+        // ── Toast notification overlay ────────────────────────────────────
+        toastPanel = buildToastPanel();
+        toastPanel.setBounds((1060 - 340) / 2, 700 - 48 - 24, 340, 48);
+        toastPanel.setVisible(false);
+        layeredRoot.add(toastPanel, JLayeredPane.POPUP_LAYER);
 
-        JPanel membersFooter = new JPanel(new BorderLayout());
-        membersFooter.setOpaque(false);
-        membersFooter.setBorder(new EmptyBorder(10, 14, 12, 14));
-        JLabel lblHint = new JLabel("<html><small style='color:#64748B;'>* <i>Nhấp đúp vào tên<br>để chuyển sang chat riêng</i></small></html>");
-        membersFooter.add(lblHint, BorderLayout.CENTER);
-        membersPanel.add(membersFooter, BorderLayout.SOUTH);
+        setContentPane(layeredRoot);
 
-        JPanel groupsPanel = new JPanel(new BorderLayout());
-        groupsPanel.setOpaque(false);
+        // Initial system message
+        addSystemMessage("✓  Đã kết nối thành công vào phòng chat!");
+        txtInput.requestFocusInWindow();
+    }
 
-        JPanel groupsTop = new JPanel();
-        groupsTop.setLayout(new BoxLayout(groupsTop, BoxLayout.Y_AXIS));
-        groupsTop.setOpaque(false);
-        groupsTop.setBorder(new EmptyBorder(0, 14, 8, 14));
+    // ── Header ──────────────────────────────────────────────────────────────────
+    private JPanel buildHeader() {
+        JPanel header = new JPanel(new BorderLayout(16, 0)) {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(UIUtils.COLOR_SURFACE_1);
+                g2.fillRect(0, 0, getWidth(), getHeight());
+                // Bottom border
+                g2.setColor(UIUtils.COLOR_BORDER);
+                g2.fillRect(0, getHeight() - 1, getWidth(), 1);
+                g2.dispose();
+            }
+        };
+        header.setOpaque(false);
+        header.setBorder(new EmptyBorder(12, 22, 12, 22));
 
-        JButton btnCreateGroup = new JButton("+ Tạo nhóm chat");
-        btnCreateGroup.setFont(UIUtils.FONT_BOLD);
-        btnCreateGroup.setForeground(UIUtils.COLOR_PRIMARY);
-        btnCreateGroup.setBackground(UIUtils.COLOR_PRIMARY_LIGHT);
-        btnCreateGroup.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(new Color(191, 219, 254), 1),
-            new EmptyBorder(8, 12, 8, 12)
-        ));
-        btnCreateGroup.setFocusPainted(false);
-        btnCreateGroup.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        btnCreateGroup.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
-        btnCreateGroup.setAlignmentX(Component.CENTER_ALIGNMENT);
-        btnCreateGroup.addActionListener(e -> performCreateGroup());
-        groupsTop.add(btnCreateGroup);
+        // Left: avatar + info
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        left.setOpaque(false);
 
-        groupsTop.add(Box.createVerticalStrut(10));
+        JPanel avatar = UIUtils.createAvatarPanel(client.getUsername(), 40);
+        left.add(avatar);
 
-        JPanel groupsSubHeader = new JPanel(new BorderLayout());
-        groupsSubHeader.setOpaque(false);
-        lblGroupCountBadge = new JLabel("Các nhóm trò chuyện (3)");
+        JPanel textCol = new JPanel();
+        textCol.setLayout(new BoxLayout(textCol, BoxLayout.Y_AXIS));
+        textCol.setOpaque(false);
+
+        JLabel lblName = new JLabel(client.getUsername());
+        lblName.setFont(UIUtils.FONT_HEADER);
+        lblName.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
+        textCol.add(lblName);
+
+        lblServerInfo = new JLabel("● Đang trực tuyến  ·  " + currentRoomName + "  ·  " +
+                client.getServerHost() + ":" + client.getServerPort());
+        lblServerInfo.setFont(UIUtils.FONT_TINY);
+        lblServerInfo.setForeground(UIUtils.COLOR_ONLINE);
+        textCol.add(lblServerInfo);
+
+        left.add(textCol);
+        header.add(left, BorderLayout.WEST);
+
+        // Right: channel badge + logout
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        right.setOpaque(false);
+
+        // Room badge
+        UIUtils.RoundedPanel roomBadge = new UIUtils.RoundedPanel(UIUtils.COLOR_PRIMARY_LIGHT, UIUtils.COLOR_BORDER, 8);
+        roomBadge.setLayout(new FlowLayout(FlowLayout.CENTER, 10, 4));
+        JLabel lblRoom = new JLabel("# " + currentRoomName);
+        lblRoom.setFont(UIUtils.FONT_BOLD);
+        lblRoom.setForeground(UIUtils.COLOR_PRIMARY);
+        roomBadge.add(lblRoom);
+        right.add(roomBadge);
+
+        // Logout button
+        UIUtils.ModernButton btnLogout = new UIUtils.ModernButton(
+            "Đăng xuất",
+            new Color(60, 20, 20, 180),
+            UIUtils.COLOR_DANGER,
+            UIUtils.COLOR_ACCENT_ROSE
+        );
+        btnLogout.setCornerRadius(8);
+        btnLogout.setPreferredSize(new Dimension(100, 34));
+        btnLogout.addMouseListener(new MouseAdapter() {
+            @Override public void mouseEntered(MouseEvent e) { btnLogout.setForeground(Color.WHITE); }
+            @Override public void mouseExited(MouseEvent e)  { btnLogout.setForeground(UIUtils.COLOR_ACCENT_ROSE); }
+        });
+        btnLogout.addActionListener(e -> performLogout());
+        right.add(btnLogout);
+
+        header.add(right, BorderLayout.EAST);
+        return header;
+    }
+
+    // ── Chat area ────────────────────────────────────────────────────────────────
+    private JScrollPane buildChatArea() {
+        messagesBox = new JPanel();
+        messagesBox.setLayout(new BoxLayout(messagesBox, BoxLayout.Y_AXIS));
+        messagesBox.setBackground(UIUtils.COLOR_BG_DARK);
+        messagesBox.setBorder(new EmptyBorder(16, 20, 16, 20));
+
+        chatScroll = new JScrollPane(messagesBox);
+        chatScroll.setBorder(null);
+        chatScroll.getVerticalScrollBar().setUnitIncrement(18);
+        chatScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        chatScroll.setBackground(UIUtils.COLOR_BG_DARK);
+        chatScroll.getViewport().setBackground(UIUtils.COLOR_BG_DARK);
+
+        // Custom scrollbar styling
+        chatScroll.getVerticalScrollBar().setUI(new ModernScrollBarUI());
+        return chatScroll;
+    }
+
+    // ── Sidebar ──────────────────────────────────────────────────────────────────
+    private JPanel buildSidebar() {
+        JPanel sidebar = new JPanel(new BorderLayout()) {
+            @Override protected void paintComponent(Graphics g) {
+                g.setColor(UIUtils.COLOR_BG_SIDEBAR);
+                g.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        sidebar.setOpaque(false);
+        sidebar.setPreferredSize(new Dimension(270, 0));
+
+        // Tab bar
+        JPanel tabBar = new JPanel(new GridLayout(1, 2, 6, 0));
+        tabBar.setOpaque(false);
+        tabBar.setBorder(new EmptyBorder(12, 14, 12, 14));
+
+        btnTabMembers = createSidebarTab("👥  Thành viên", true);
+        btnTabGroups  = createSidebarTab("💬  Nhóm chat", false);
+        tabBar.add(btnTabMembers);
+        tabBar.add(btnTabGroups);
+        sidebar.add(tabBar, BorderLayout.NORTH);
+
+        // Card panels
+        sidebarCardLayout = new CardLayout();
+        sidebarCardPanel  = new JPanel(sidebarCardLayout);
+        sidebarCardPanel.setOpaque(false);
+        sidebarCardPanel.add(buildMembersPanel(), "MEMBERS");
+        sidebarCardPanel.add(buildGroupsPanel(),  "GROUPS");
+        sidebar.add(sidebarCardPanel, BorderLayout.CENTER);
+
+        btnTabMembers.addActionListener(e -> {
+            activateSidebarTab(btnTabMembers, btnTabGroups);
+            sidebarCardLayout.show(sidebarCardPanel, "MEMBERS");
+        });
+        btnTabGroups.addActionListener(e -> {
+            activateSidebarTab(btnTabGroups, btnTabMembers);
+            sidebarCardLayout.show(sidebarCardPanel, "GROUPS");
+            client.requestRoomList();
+        });
+
+        return sidebar;
+    }
+
+    private JButton createSidebarTab(String text, boolean active) {
+        JButton btn = new JButton(text);
+        btn.setFont(UIUtils.FONT_BOLD);
+        btn.setFocusPainted(false);
+        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        btn.setBorderPainted(false);
+        applyTabStyle(btn, active);
+        return btn;
+    }
+
+    private void applyTabStyle(JButton btn, boolean active) {
+        if (active) {
+            btn.setBackground(UIUtils.COLOR_PRIMARY);
+            btn.setForeground(Color.WHITE);
+            btn.setBorder(new EmptyBorder(7, 14, 7, 14));
+        } else {
+            btn.setBackground(UIUtils.COLOR_SURFACE_2);
+            btn.setForeground(UIUtils.COLOR_TEXT_MUTED);
+            btn.setBorder(new EmptyBorder(7, 14, 7, 14));
+        }
+    }
+
+    private void activateSidebarTab(JButton active, JButton inactive) {
+        applyTabStyle(active, true);
+        applyTabStyle(inactive, false);
+    }
+
+    private JPanel buildMembersPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setOpaque(false);
+
+        // Sub-header
+        JPanel subHeader = new JPanel(new BorderLayout());
+        subHeader.setOpaque(false);
+        subHeader.setBorder(new EmptyBorder(4, 16, 8, 16));
+        lblOnlineBadge = new JLabel("● 1 trực tuyến");
+        lblOnlineBadge.setFont(UIUtils.FONT_TINY);
+        lblOnlineBadge.setForeground(UIUtils.COLOR_ONLINE);
+        subHeader.add(lblOnlineBadge, BorderLayout.WEST);
+        panel.add(subHeader, BorderLayout.NORTH);
+
+        // User list
+        userListModel = new DefaultListModel<>();
+        userListModel.addElement(client.getUsername());
+        userList = new JList<>(userListModel);
+        userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        userList.setCellRenderer(new UserCellRenderer());
+        userList.setBackground(UIUtils.COLOR_BG_SIDEBAR);
+        userList.setBorder(new EmptyBorder(4, 8, 4, 8));
+        userList.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2) selectUserForPrivateChat();
+            }
+        });
+
+        JScrollPane scroll = new JScrollPane(userList);
+        scroll.setBorder(null);
+        scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.getVerticalScrollBar().setUI(new ModernScrollBarUI());
+        panel.add(scroll, BorderLayout.CENTER);
+
+        // Hint footer
+        JPanel footer = new JPanel();
+        footer.setOpaque(false);
+        footer.setBorder(new EmptyBorder(10, 16, 14, 16));
+        JLabel hint = new JLabel("<html><span style='color:#6466A4; font-size:10px;'>↑ Nhấp đúp để chat riêng</span></html>");
+        footer.add(hint);
+        panel.add(footer, BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JPanel buildGroupsPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setOpaque(false);
+
+        JPanel topArea = new JPanel();
+        topArea.setLayout(new BoxLayout(topArea, BoxLayout.Y_AXIS));
+        topArea.setOpaque(false);
+        topArea.setBorder(new EmptyBorder(4, 14, 8, 14));
+
+        // Create group button
+        UIUtils.ModernButton btnCreate = new UIUtils.ModernButton(
+            "+ Tạo nhóm mới",
+            new Color(30, 35, 55),
+            UIUtils.COLOR_SURFACE_3,
+            UIUtils.COLOR_PRIMARY
+        );
+        btnCreate.setCornerRadius(8);
+        btnCreate.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+        btnCreate.setAlignmentX(Component.CENTER_ALIGNMENT);
+        btnCreate.setBorder(new EmptyBorder(0, 0, 0, 0));
+        // Custom border via RoundedPanel wrapping
+        btnCreate.addActionListener(e -> performCreateGroup());
+        topArea.add(btnCreate);
+
+        topArea.add(Box.createVerticalStrut(10));
+
+        lblGroupCountBadge = new JLabel("Các nhóm trò chuyện");
         lblGroupCountBadge.setFont(UIUtils.FONT_TINY);
         lblGroupCountBadge.setForeground(UIUtils.COLOR_TEXT_MUTED);
-        groupsSubHeader.add(lblGroupCountBadge, BorderLayout.WEST);
-        groupsTop.add(groupsSubHeader);
+        topArea.add(lblGroupCountBadge);
 
-        groupsPanel.add(groupsTop, BorderLayout.NORTH);
+        panel.add(topArea, BorderLayout.NORTH);
 
         groupListModel = new DefaultListModel<>();
         groupListModel.addElement("General");
@@ -253,65 +380,55 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         groupList = new JList<>(groupListModel);
         groupList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         groupList.setCellRenderer(new GroupCellRenderer());
-        groupList.setBackground(UIUtils.COLOR_SURFACE);
+        groupList.setBackground(UIUtils.COLOR_BG_SIDEBAR);
         groupList.setBorder(new EmptyBorder(4, 8, 4, 8));
-
         groupList.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2 || e.getClickCount() == 1) {
-                    performJoinSelectedGroup();
-                }
+            @Override public void mouseClicked(MouseEvent e) {
+                performJoinSelectedGroup();
             }
         });
 
-        JScrollPane groupScroll = new JScrollPane(groupList);
-        groupScroll.setBorder(null);
-        groupScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        groupsPanel.add(groupScroll, BorderLayout.CENTER);
+        JScrollPane scroll = new JScrollPane(groupList);
+        scroll.setBorder(null);
+        scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.getVerticalScrollBar().setUI(new ModernScrollBarUI());
+        panel.add(scroll, BorderLayout.CENTER);
 
-        JPanel groupsFooter = new JPanel(new BorderLayout());
-        groupsFooter.setOpaque(false);
-        groupsFooter.setBorder(new EmptyBorder(10, 14, 12, 14));
-        JLabel lblGroupHint = new JLabel("<html><small style='color:#64748B;'>* <i>Nhấp vào nhóm<br>để tham gia trò chuyện</i></small></html>");
-        groupsFooter.add(lblGroupHint, BorderLayout.CENTER);
-        groupsPanel.add(groupsFooter, BorderLayout.SOUTH);
+        JPanel footer = new JPanel();
+        footer.setOpaque(false);
+        footer.setBorder(new EmptyBorder(10, 16, 14, 16));
+        JLabel hint = new JLabel("<html><span style='color:#6466A4; font-size:10px;'>↑ Nhấp vào nhóm để tham gia</span></html>");
+        footer.add(hint);
+        panel.add(footer, BorderLayout.SOUTH);
+        return panel;
+    }
 
-        sidebarCardPanel.add(membersPanel, "MEMBERS");
-        sidebarCardPanel.add(groupsPanel, "GROUPS");
-        sidebarPanel.add(sidebarCardPanel, BorderLayout.CENTER);
+    // ── Input bar ────────────────────────────────────────────────────────────────
+    private JPanel buildInputBar() {
+        JPanel bar = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setColor(UIUtils.COLOR_SURFACE_1);
+                g2.fillRect(0, 0, getWidth(), getHeight());
+                // Top border
+                g2.setColor(UIUtils.COLOR_BORDER);
+                g2.fillRect(0, 0, getWidth(), 1);
+                g2.dispose();
+            }
+        };
+        bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
+        bar.setOpaque(false);
+        bar.setBorder(new EmptyBorder(10, 20, 14, 20));
 
-        btnTabMembers.addActionListener(e -> {
-            styleTabButton(btnTabMembers, true);
-            styleTabButton(btnTabGroups, false);
-            sidebarCardLayout.show(sidebarCardPanel, "MEMBERS");
-        });
-
-        btnTabGroups.addActionListener(e -> {
-            styleTabButton(btnTabGroups, true);
-            styleTabButton(btnTabMembers, false);
-            sidebarCardLayout.show(sidebarCardPanel, "GROUPS");
-            client.requestRoomList();
-        });
-
-        sidebarPanel.setPreferredSize(new Dimension(265, 0));
-        splitPane.setRightComponent(sidebarPanel);
-
-        rootPanel.add(splitPane, BorderLayout.CENTER);
-
-        JPanel bottomArea = new JPanel();
-        bottomArea.setLayout(new BoxLayout(bottomArea, BoxLayout.Y_AXIS));
-        bottomArea.setBackground(UIUtils.COLOR_SURFACE);
-        bottomArea.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(1, 0, 0, 0, UIUtils.COLOR_BORDER),
-            new EmptyBorder(10, 18, 12, 18)
-        ));
+        // ── Recipient row ────────────────────────────────────────────────────
+        JPanel recipRow = new JPanel(new BorderLayout(8, 0));
+        recipRow.setOpaque(false);
+        recipRow.setBorder(new EmptyBorder(0, 0, 8, 0));
 
         recipientStatusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         recipientStatusPanel.setOpaque(false);
-        recipientStatusPanel.setBorder(new EmptyBorder(0, 0, 8, 0));
 
-        lblCurrentRecipient = new JLabel("[Chung] Gửi tới nhóm: " + currentRoomName);
+        lblCurrentRecipient = new JLabel("[Chung] Gửi tới: " + currentRoomName);
         lblCurrentRecipient.setFont(UIUtils.FONT_BOLD);
         lblCurrentRecipient.setForeground(UIUtils.COLOR_PRIMARY);
         recipientStatusPanel.add(lblCurrentRecipient);
@@ -319,153 +436,220 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         cbRecipient = new JComboBox<>();
         cbRecipient.addItem(ALL_USERS);
         cbRecipient.setFont(UIUtils.FONT_SMALL);
-        cbRecipient.setPreferredSize(new Dimension(170, 26));
+        cbRecipient.setPreferredSize(new Dimension(175, 28));
+        cbRecipient.setBackground(UIUtils.COLOR_SURFACE_2);
+        cbRecipient.setForeground(UIUtils.COLOR_TEXT_SECONDARY);
+        cbRecipient.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
         cbRecipient.addActionListener(e -> updateRecipientBadge());
         recipientStatusPanel.add(cbRecipient);
 
-        btnCancelPrivate = new JButton("x Hủy chat riêng");
+        btnCancelPrivate = new JButton("✕ Hủy riêng");
         btnCancelPrivate.setFont(UIUtils.FONT_TINY);
         btnCancelPrivate.setForeground(UIUtils.COLOR_DANGER);
-        btnCancelPrivate.setContentAreaFilled(false);
-        btnCancelPrivate.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_DANGER, 1));
+        btnCancelPrivate.setBackground(new Color(40, 15, 15, 180));
+        btnCancelPrivate.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(80, 30, 30), 1),
+            new EmptyBorder(2, 8, 2, 8)
+        ));
+        btnCancelPrivate.setFocusPainted(false);
         btnCancelPrivate.setCursor(new Cursor(Cursor.HAND_CURSOR));
         btnCancelPrivate.setVisible(false);
-        btnCancelPrivate.addActionListener(e -> {
-            cbRecipient.setSelectedItem(ALL_USERS);
-        });
+        btnCancelPrivate.addActionListener(e -> cbRecipient.setSelectedItem(ALL_USERS));
         recipientStatusPanel.add(btnCancelPrivate);
 
-        JPanel emojiPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        emojiPanel.setOpaque(false);
-        String[] quickEmojis = {":)", ":D", "<3", "(y)", "^^", "O_o"};
-        for (String emoji : quickEmojis) {
-            JButton btnEmoji = new JButton(emoji);
-            btnEmoji.setFont(UIUtils.FONT_SMALL);
-            btnEmoji.setForeground(UIUtils.COLOR_TEXT_MUTED);
-            btnEmoji.setPreferredSize(new Dimension(42, 26));
-            btnEmoji.setMargin(new Insets(0, 0, 0, 0));
-            btnEmoji.setContentAreaFilled(false);
-            btnEmoji.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
-            btnEmoji.setCursor(new Cursor(Cursor.HAND_CURSOR));
-            btnEmoji.addActionListener(e -> {
-                txtInput.setText(txtInput.getText() + (txtInput.getText().isEmpty() ? "" : " ") + emoji);
+        recipRow.add(recipientStatusPanel, BorderLayout.WEST);
+
+        // ── Quick emoji row ──────────────────────────────────────────────────
+        JPanel emojiRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        emojiRow.setOpaque(false);
+        String[] emojis = {"😀", "😂", "❤️", "👍", "🔥", "😮"};
+        for (String em : emojis) {
+            JButton eb = new JButton(em);
+            eb.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 15));
+            eb.setPreferredSize(new Dimension(34, 28));
+            eb.setMargin(new Insets(0, 0, 0, 0));
+            eb.setContentAreaFilled(false);
+            eb.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
+            eb.setBackground(UIUtils.COLOR_SURFACE_2);
+            eb.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            eb.setFocusPainted(false);
+            eb.addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent e) {
+                    eb.setBackground(UIUtils.COLOR_SURFACE_3);
+                    eb.setContentAreaFilled(true);
+                }
+                @Override public void mouseExited(MouseEvent e) {
+                    eb.setContentAreaFilled(false);
+                }
+            });
+            eb.addActionListener(e -> {
+                txtInput.setText(txtInput.getText() + em);
                 txtInput.requestFocusInWindow();
             });
-            emojiPanel.add(btnEmoji);
+            emojiRow.add(eb);
         }
+        recipRow.add(emojiRow, BorderLayout.EAST);
+        bar.add(recipRow);
 
-        JPanel recipientRow = new JPanel(new BorderLayout());
-        recipientRow.setOpaque(false);
-        recipientRow.add(recipientStatusPanel, BorderLayout.WEST);
-        recipientRow.add(emojiPanel, BorderLayout.EAST);
-        bottomArea.add(recipientRow);
-
+        // ── Message input row ────────────────────────────────────────────────
         JPanel inputRow = new JPanel(new BorderLayout(10, 0));
         inputRow.setOpaque(false);
 
-        txtInput = new UIUtils.ModernTextField("Nhập tin nhắn của bạn... (Nhấn Enter để gửi)");
-        txtInput.setPreferredSize(new Dimension(0, 42));
+        txtInput = new UIUtils.ModernTextField("Nhập tin nhắn... (Enter để gửi)");
+        txtInput.setPreferredSize(new Dimension(0, 44));
         inputRow.add(txtInput, BorderLayout.CENTER);
 
-        btnSend = new UIUtils.ModernButton("Gửi >", UIUtils.COLOR_PRIMARY, UIUtils.COLOR_PRIMARY_HOVER, Color.WHITE);
-        btnSend.setPreferredSize(new Dimension(95, 42));
+        btnSend = new UIUtils.ModernButton("Gửi ➤", UIUtils.COLOR_PRIMARY, UIUtils.COLOR_PRIMARY_HOVER, Color.WHITE);
+        btnSend.setCornerRadius(10);
+        btnSend.setPreferredSize(new Dimension(100, 44));
         inputRow.add(btnSend, BorderLayout.EAST);
 
-        bottomArea.add(inputRow);
-        rootPanel.add(bottomArea, BorderLayout.SOUTH);
-
-        setContentPane(rootPanel);
+        bar.add(inputRow);
 
         ActionListener sendAction = e -> performSendMessage();
         btnSend.addActionListener(sendAction);
         txtInput.addActionListener(sendAction);
 
-        addSystemMessage("Đã kết nối thành công vào phòng chat!");
-
-        txtInput.requestFocusInWindow();
+        return bar;
     }
 
+    // ── Toast overlay panel ───────────────────────────────────────────────────────
+    private JPanel buildToastPanel() {
+        JPanel tp = new JPanel(new BorderLayout()) {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, toastAlpha));
+                g2.setColor(new Color(30, 33, 50, 230));
+                g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(), 14, 14));
+                g2.setColor(UIUtils.COLOR_BORDER_LIGHT);
+                g2.setStroke(new BasicStroke(1f));
+                g2.draw(new RoundRectangle2D.Float(0.5f, 0.5f, getWidth() - 1, getHeight() - 1, 14, 14));
+                g2.dispose();
+                super.paintComponent(g);
+            }
+        };
+        tp.setOpaque(false);
+        tp.setBorder(new EmptyBorder(0, 16, 0, 16));
+
+        toastLabel = new JLabel("", SwingConstants.CENTER);
+        toastLabel.setFont(UIUtils.FONT_SMALL);
+        toastLabel.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
+        tp.add(toastLabel, BorderLayout.CENTER);
+        return tp;
+    }
+
+    public void showToast(String message) {
+        showToast(message, UIUtils.COLOR_TEXT_PRIMARY);
+    }
+
+    public void showToast(String message, Color color) {
+        SwingUtilities.invokeLater(() -> {
+            toastLabel.setText(message);
+            toastLabel.setForeground(color);
+            toastPanel.setVisible(true);
+
+            if (toastFadeTimer != null) toastFadeTimer.stop();
+            if (toastHideTimer != null) toastHideTimer.stop();
+
+            // Fade in
+            toastAlpha = 0f;
+            toastFadeTimer = new Timer(16, null);
+            toastFadeTimer.addActionListener(e -> {
+                toastAlpha = Math.min(1f, toastAlpha + 0.08f);
+                toastPanel.repaint();
+                if (toastAlpha >= 1f) toastFadeTimer.stop();
+            });
+            toastFadeTimer.start();
+
+            // Auto-hide after 2.5s
+            toastHideTimer = new Timer(2500, e -> {
+                if (toastFadeTimer != null) toastFadeTimer.stop();
+                toastFadeTimer = new Timer(16, null);
+                toastFadeTimer.addActionListener(fe -> {
+                    toastAlpha = Math.max(0f, toastAlpha - 0.06f);
+                    toastPanel.repaint();
+                    if (toastAlpha <= 0f) {
+                        toastFadeTimer.stop();
+                        toastPanel.setVisible(false);
+                    }
+                });
+                toastFadeTimer.start();
+            });
+            toastHideTimer.setRepeats(false);
+            toastHideTimer.start();
+        });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    //  SIDEBAR TAB BUTTONS STYLING (legacy)
+    // ════════════════════════════════════════════════════════════════════════════
     private void styleTabButton(JButton btn, boolean active) {
-        if (active) {
-            btn.setBackground(UIUtils.COLOR_PRIMARY);
-            btn.setForeground(Color.WHITE);
-            btn.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
-        } else {
-            btn.setBackground(new Color(241, 245, 249));
-            btn.setForeground(UIUtils.COLOR_TEXT_MUTED);
-            btn.setBorder(BorderFactory.createLineBorder(UIUtils.COLOR_BORDER, 1));
-        }
+        applyTabStyle(btn, active);
     }
 
+    // ════════════════════════════════════════════════════════════════════════════
+    //  BUSINESS LOGIC
+    // ════════════════════════════════════════════════════════════════════════════
     private void performCreateGroup() {
-        String name = JOptionPane.showInputDialog(
-            this,
-            "Nhập tên nhóm chat mới:",
-            "Tạo nhóm chat",
-            JOptionPane.PLAIN_MESSAGE
-        );
+        String name = JOptionPane.showInputDialog(this,
+            "Nhập tên nhóm chat mới:", "Tạo nhóm chat", JOptionPane.PLAIN_MESSAGE);
         if (name == null) return;
         name = name.trim();
         if (name.isEmpty()) return;
-
         if (name.contains("|") || name.contains(",")) {
-            JOptionPane.showMessageDialog(this, "Tên nhóm không được chứa ký tự '|' hoặc ','", "Lỗi", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Tên nhóm không được chứa '|' hoặc ','", "Lỗi", JOptionPane.ERROR_MESSAGE);
             return;
         }
-
         client.sendCreateRoom(name);
         currentRoomName = name;
         updateRoomHeader();
-        if (!groupListModel.contains(name)) {
-            groupListModel.addElement(name);
-        }
+        if (!groupListModel.contains(name)) groupListModel.addElement(name);
         groupList.setSelectedValue(name, true);
-        addSystemMessage("Bạn đã tạo và vào nhóm: " + name);
+        addSystemMessage("✓  Bạn đã tạo và vào nhóm: " + name);
+        showToast("Đã tạo nhóm: " + name, UIUtils.COLOR_ONLINE);
     }
 
     private void performJoinSelectedGroup() {
         String selected = groupList.getSelectedValue();
         if (selected == null || selected.equalsIgnoreCase(currentRoomName)) return;
-
         client.sendJoinRoom(selected);
         currentRoomName = selected;
         updateRoomHeader();
         groupList.repaint();
-        addSystemMessage("Bạn đã chuyển sang nhóm chat: " + selected);
+        addSystemMessage("→  Bạn đã chuyển sang nhóm: " + selected);
+        showToast("Đã vào nhóm: " + selected, UIUtils.COLOR_PRIMARY);
     }
 
     private void updateRoomHeader() {
-        if (lblServerInfo != null) {
-            lblServerInfo.setText("● Đang trực tuyến  |  Nhóm: " + currentRoomName + "  |  Server: " + client.getServerHost() + ":" + client.getServerPort());
-        }
-        if (cbRecipient.getSelectedItem() == null || cbRecipient.getSelectedItem().equals(ALL_USERS)) {
-            lblCurrentRecipient.setText("[Chung] Gửi tới nhóm: " + currentRoomName);
-        }
+        if (lblServerInfo != null)
+            lblServerInfo.setText("● Đang trực tuyến  ·  " + currentRoomName + "  ·  " +
+                    client.getServerHost() + ":" + client.getServerPort());
+        if (cbRecipient.getSelectedItem() == null || cbRecipient.getSelectedItem().equals(ALL_USERS))
+            lblCurrentRecipient.setText("[Chung] Gửi tới: " + currentRoomName);
     }
 
     private void updateRecipientBadge() {
-        String selected = (String) cbRecipient.getSelectedItem();
-        if (selected == null || selected.equals(ALL_USERS)) {
-            lblCurrentRecipient.setText("[Chung] Gửi tới nhóm: " + currentRoomName);
+        String sel = (String) cbRecipient.getSelectedItem();
+        if (sel == null || sel.equals(ALL_USERS)) {
+            lblCurrentRecipient.setText("[Chung] Gửi tới: " + currentRoomName);
             lblCurrentRecipient.setForeground(UIUtils.COLOR_PRIMARY);
             btnCancelPrivate.setVisible(false);
         } else {
-            lblCurrentRecipient.setText("[Riêng] Đang chat với: " + selected);
+            lblCurrentRecipient.setText("[Riêng] Đang chat với: @" + sel);
             lblCurrentRecipient.setForeground(UIUtils.COLOR_PRIVATE_TEXT);
             btnCancelPrivate.setVisible(true);
         }
     }
 
     private void selectUserForPrivateChat() {
-        String selected = userList.getSelectedValue();
-        if (selected == null) return;
-
-        String target = selected.replace(" (Bạn)", "").trim();
+        String sel = userList.getSelectedValue();
+        if (sel == null) return;
+        String target = sel.replace(" (Bạn)", "").trim();
         if (target.equalsIgnoreCase(client.getUsername())) {
-            JOptionPane.showMessageDialog(this, "Bạn không thể gửi tin nhắn riêng cho chính mình!", "Thông báo", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Bạn không thể chat riêng với chính mình!", "Thông báo", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-
         boolean found = false;
         for (int i = 0; i < cbRecipient.getItemCount(); i++) {
             if (cbRecipient.getItemAt(i).equalsIgnoreCase(target)) {
@@ -474,143 +658,128 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
                 break;
             }
         }
-        if (!found) {
-            cbRecipient.addItem(target);
-            cbRecipient.setSelectedItem(target);
-        }
+        if (!found) { cbRecipient.addItem(target); cbRecipient.setSelectedItem(target); }
         txtInput.requestFocusInWindow();
+        showToast("Chat riêng với @" + target, UIUtils.COLOR_PRIVATE_TEXT);
     }
 
     private void performSendMessage() {
         String message = txtInput.getText().trim();
         if (message.isEmpty()) return;
-
         String recipient = (String) cbRecipient.getSelectedItem();
-
         if (recipient == null || recipient.equals(ALL_USERS)) {
             client.sendPublicMessage(message);
         } else {
             client.sendPrivateMessage(recipient, message);
             addPrivateMessage(client.getUsername(), recipient, message, true);
         }
-
         txtInput.setText("");
         txtInput.requestFocusInWindow();
     }
 
     private void performLogout() {
-        int confirm = JOptionPane.showConfirmDialog(
-            this,
-            "Bạn có chắc chắn muốn đăng xuất khỏi phòng chat?",
-            "Xác nhận",
-            JOptionPane.YES_NO_OPTION
-        );
+        int confirm = JOptionPane.showConfirmDialog(this,
+            "Bạn có chắc chắn muốn đăng xuất?", "Xác nhận đăng xuất", JOptionPane.YES_NO_OPTION);
         if (confirm == JOptionPane.YES_OPTION) {
             client.logout();
             this.dispose();
-            if (loginFrame != null) {
-                loginFrame.setVisible(true);
-            } else {
-                System.exit(0);
-            }
+            if (loginFrame != null) loginFrame.setVisible(true);
+            else System.exit(0);
         }
     }
 
+    // ════════════════════════════════════════════════════════════════════════════
+    //  MESSAGE RENDERING
+    // ════════════════════════════════════════════════════════════════════════════
     public void addPublicMessage(String sender, String message) {
         boolean isMe = sender.equalsIgnoreCase(client.getUsername());
-        String time = LocalTime.now().format(timeFormatter);
+        String time  = LocalTime.now().format(timeFormatter);
 
-        JPanel row = new JPanel(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 0, 4));
+        JPanel row = new JPanel(new FlowLayout(isMe ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 4));
         row.setOpaque(false);
-        row.setMaximumSize(new Dimension(1000, 120));
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 999));
 
         if (!isMe) {
-            row.add(createAvatarComponent(sender, 32));
-            row.add(Box.createHorizontalStrut(8));
+            row.add(UIUtils.createAvatarPanel(sender, 34));
         }
 
-        JPanel bubbleContainer = new JPanel();
-        bubbleContainer.setLayout(new BoxLayout(bubbleContainer, BoxLayout.Y_AXIS));
-        bubbleContainer.setOpaque(false);
+        JPanel container = new JPanel();
+        container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
+        container.setOpaque(false);
 
         if (!isMe) {
-            JLabel lblSender = new JLabel(sender);
-            lblSender.setFont(UIUtils.FONT_TINY);
-            lblSender.setForeground(UIUtils.COLOR_TEXT_MUTED);
-            bubbleContainer.add(lblSender);
-            bubbleContainer.add(Box.createVerticalStrut(3));
+            JLabel senderLbl = new JLabel("  " + sender);
+            senderLbl.setFont(UIUtils.FONT_TINY);
+            senderLbl.setForeground(UIUtils.getAvatarColor(sender));
+            senderLbl.setAlignmentX(isMe ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
+            container.add(senderLbl);
+            container.add(Box.createVerticalStrut(3));
         }
 
-        Color bgColor = isMe ? UIUtils.COLOR_MY_BUBBLE : UIUtils.COLOR_OTHER_BUBBLE;
-        Color borderColor = isMe ? null : UIUtils.COLOR_BORDER;
-        UIUtils.RoundedPanel bubble = new UIUtils.RoundedPanel(bgColor, borderColor, 14);
-        bubble.setLayout(new BorderLayout(8, 2));
-        bubble.setBorder(new EmptyBorder(8, 12, 8, 12));
+        // Bubble
+        Color bgColor  = isMe ? UIUtils.COLOR_MY_BUBBLE : UIUtils.COLOR_OTHER_BUBBLE;
+        Color bdrColor = isMe ? null : UIUtils.COLOR_BORDER;
+        UIUtils.RoundedPanel bubble = new UIUtils.RoundedPanel(bgColor, bdrColor, 16);
+        bubble.setLayout(new BorderLayout(0, 4));
+        bubble.setBorder(new EmptyBorder(9, 14, 9, 14));
+        bubble.setAlignmentX(isMe ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
 
-        JLabel lblMsg = new JLabel("<html><body style='max-width:380px; word-wrap:break-word;'>" + escapeHtml(message) + "</body></html>");
-        lblMsg.setFont(UIUtils.FONT_REGULAR);
-        lblMsg.setForeground(isMe ? Color.WHITE : UIUtils.COLOR_TEXT_MAIN);
-        bubble.add(lblMsg, BorderLayout.CENTER);
+        JLabel msgLbl = new JLabel("<html><body style='max-width:380px; word-wrap:break-word;'>" + escapeHtml(message) + "</body></html>");
+        msgLbl.setFont(UIUtils.FONT_REGULAR);
+        msgLbl.setForeground(isMe ? Color.WHITE : UIUtils.COLOR_TEXT_PRIMARY);
+        bubble.add(msgLbl, BorderLayout.CENTER);
 
-        JLabel lblTime = new JLabel(time, SwingConstants.RIGHT);
-        lblTime.setFont(UIUtils.FONT_TINY);
-        lblTime.setForeground(isMe ? new Color(220, 235, 255) : UIUtils.COLOR_TEXT_MUTED);
-        bubble.add(lblTime, BorderLayout.SOUTH);
+        JLabel timeLbl = new JLabel(time, isMe ? SwingConstants.RIGHT : SwingConstants.LEFT);
+        timeLbl.setFont(UIUtils.FONT_TINY);
+        timeLbl.setForeground(isMe ? new Color(200, 210, 255, 160) : UIUtils.COLOR_TEXT_MUTED);
+        bubble.add(timeLbl, BorderLayout.SOUTH);
 
-        bubbleContainer.add(bubble);
-        row.add(bubbleContainer);
-
+        container.add(bubble);
+        row.add(container);
         appendBubbleRow(row);
     }
 
     public void addPrivateMessage(String sender, String receiver, String message, boolean isOutgoing) {
         String time = LocalTime.now().format(timeFormatter);
-
-        JPanel row = new JPanel(new FlowLayout(isOutgoing ? FlowLayout.RIGHT : FlowLayout.LEFT, 0, 4));
+        JPanel row = new JPanel(new FlowLayout(isOutgoing ? FlowLayout.RIGHT : FlowLayout.LEFT, 8, 4));
         row.setOpaque(false);
-        row.setMaximumSize(new Dimension(1000, 120));
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 999));
 
         if (!isOutgoing) {
-            row.add(createAvatarComponent(sender, 32));
-            row.add(Box.createHorizontalStrut(8));
+            row.add(UIUtils.createAvatarPanel(sender, 34));
         }
 
-        UIUtils.RoundedPanel bubble = new UIUtils.RoundedPanel(
-            UIUtils.COLOR_PRIVATE_BG,
-            UIUtils.COLOR_PRIVATE_BORDER,
-            14
-        );
-        bubble.setLayout(new BorderLayout(8, 3));
-        bubble.setBorder(new EmptyBorder(8, 12, 8, 12));
+        UIUtils.RoundedPanel bubble = new UIUtils.RoundedPanel(UIUtils.COLOR_PRIVATE_BG, UIUtils.COLOR_PRIVATE_BORDER, 16);
+        bubble.setLayout(new BorderLayout(0, 4));
+        bubble.setBorder(new EmptyBorder(9, 14, 9, 14));
 
-        String headerText = isOutgoing ? "[Chat riêng tới @" + receiver + "]" : "[Chat riêng từ @" + sender + "]";
-        JLabel lblHeader = new JLabel(headerText);
-        lblHeader.setFont(UIUtils.FONT_TINY);
-        lblHeader.setForeground(UIUtils.COLOR_PRIVATE_TEXT);
-        bubble.add(lblHeader, BorderLayout.NORTH);
+        String hdr = isOutgoing ? "🔒 chat riêng → @" + receiver : "🔒 @" + sender + " nhắn riêng";
+        JLabel hdrLbl = new JLabel(hdr);
+        hdrLbl.setFont(UIUtils.FONT_TINY);
+        hdrLbl.setForeground(UIUtils.COLOR_PRIVATE_TEXT);
+        bubble.add(hdrLbl, BorderLayout.NORTH);
 
-        JLabel lblMsg = new JLabel("<html><body style='max-width:380px; word-wrap:break-word;'>" + escapeHtml(message) + "</body></html>");
-        lblMsg.setFont(UIUtils.FONT_REGULAR);
-        lblMsg.setForeground(UIUtils.COLOR_TEXT_MAIN);
-        bubble.add(lblMsg, BorderLayout.CENTER);
+        JLabel msgLbl = new JLabel("<html><body style='max-width:360px; word-wrap:break-word;'>" + escapeHtml(message) + "</body></html>");
+        msgLbl.setFont(UIUtils.FONT_REGULAR);
+        msgLbl.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
+        bubble.add(msgLbl, BorderLayout.CENTER);
 
-        JLabel lblTime = new JLabel(time, SwingConstants.RIGHT);
-        lblTime.setFont(UIUtils.FONT_TINY);
-        lblTime.setForeground(UIUtils.COLOR_TEXT_MUTED);
-        bubble.add(lblTime, BorderLayout.SOUTH);
+        JLabel timeLbl = new JLabel(time, SwingConstants.RIGHT);
+        timeLbl.setFont(UIUtils.FONT_TINY);
+        timeLbl.setForeground(UIUtils.COLOR_TEXT_MUTED);
+        bubble.add(timeLbl, BorderLayout.SOUTH);
 
         row.add(bubble);
         appendBubbleRow(row);
     }
 
     public void addSystemMessage(String text) {
-        JPanel row = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 4));
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 6));
         row.setOpaque(false);
-        row.setMaximumSize(new Dimension(1000, 40));
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
 
-        UIUtils.RoundedPanel pill = new UIUtils.RoundedPanel(UIUtils.COLOR_SYSTEM_PILL, null, 12);
-        pill.setBorder(new EmptyBorder(4, 14, 4, 14));
-
+        UIUtils.RoundedPanel pill = new UIUtils.RoundedPanel(UIUtils.COLOR_SYSTEM_PILL, UIUtils.COLOR_BORDER, 12);
+        pill.setBorder(new EmptyBorder(4, 16, 4, 16));
         JLabel lbl = new JLabel(text);
         lbl.setFont(UIUtils.FONT_TINY);
         lbl.setForeground(UIUtils.COLOR_TEXT_MUTED);
@@ -624,165 +793,100 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         messagesBox.add(row);
         messagesBox.revalidate();
         messagesBox.repaint();
-
         SwingUtilities.invokeLater(() -> {
             JScrollBar v = chatScroll.getVerticalScrollBar();
             v.setValue(v.getMaximum());
         });
     }
 
-    private String escapeHtml(String text) {
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    private String escapeHtml(String t) {
+        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
-    private JPanel createAvatarComponent(String name, int size) {
-        Color color = UIUtils.getAvatarColor(name);
-        String letter = (name != null && !name.isEmpty()) ? name.substring(0, 1).toUpperCase() : "?";
-
-        JPanel panel = new JPanel() {
-            @Override
-            protected void paintComponent(Graphics g) {
-                super.paintComponent(g);
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-                g2.setColor(color);
-                g2.fillOval(0, 0, size, size);
-
-                g2.setColor(Color.WHITE);
-                g2.setFont(new Font("Segoe UI", Font.BOLD, size / 2 + 1));
-                FontMetrics fm = g2.getFontMetrics();
-                int x = (size - fm.stringWidth(letter)) / 2;
-                int y = (size - fm.getHeight()) / 2 + fm.getAscent();
-                g2.drawString(letter, x, y);
-
-                g2.dispose();
-            }
-        };
-        panel.setOpaque(false);
-        panel.setPreferredSize(new Dimension(size, size));
-        panel.setMaximumSize(new Dimension(size, size));
-        return panel;
-    }
-
-    @Override
-    public void onMessageReceived(String sender, String message) {
+    // ════════════════════════════════════════════════════════════════════════════
+    //  ChatEventListener callbacks
+    // ════════════════════════════════════════════════════════════════════════════
+    @Override public void onMessageReceived(String sender, String message) {
         SwingUtilities.invokeLater(() -> addPublicMessage(sender, message));
     }
-
-    @Override
-    public void onPrivateMessageReceived(String sender, String receiver, String message) {
+    @Override public void onPrivateMessageReceived(String sender, String receiver, String message) {
         SwingUtilities.invokeLater(() -> addPrivateMessage(sender, receiver, message, false));
     }
-
-    @Override
-    public void onUserListUpdated(List<String> users) {
+    @Override public void onUserListUpdated(List<String> users) {
         SwingUtilities.invokeLater(() -> {
-            String currentSelected = (String) cbRecipient.getSelectedItem();
-
+            String cur = (String) cbRecipient.getSelectedItem();
             userListModel.clear();
             cbRecipient.removeAllItems();
             cbRecipient.addItem(ALL_USERS);
-
             for (String u : users) {
                 userListModel.addElement(u);
-                if (!u.equalsIgnoreCase(client.getUsername())) {
-                    cbRecipient.addItem(u);
-                }
+                if (!u.equalsIgnoreCase(client.getUsername())) cbRecipient.addItem(u);
             }
-
-            lblOnlineBadge.setText(users.size() + " trực tuyến");
-
-            if (currentSelected != null && !currentSelected.equals(ALL_USERS)) {
+            lblOnlineBadge.setText("● " + users.size() + " trực tuyến");
+            if (cur != null && !cur.equals(ALL_USERS)) {
                 for (int i = 0; i < cbRecipient.getItemCount(); i++) {
-                    if (cbRecipient.getItemAt(i).equalsIgnoreCase(currentSelected)) {
-                        cbRecipient.setSelectedIndex(i);
-                        break;
+                    if (cbRecipient.getItemAt(i).equalsIgnoreCase(cur)) {
+                        cbRecipient.setSelectedIndex(i); break;
                     }
                 }
             }
             updateRecipientBadge();
         });
     }
-
-    @Override
-    public void onRoomListUpdated(List<String> rooms) {
+    @Override public void onRoomListUpdated(List<String> rooms) {
         SwingUtilities.invokeLater(() -> {
             groupListModel.clear();
-            for (String r : rooms) {
-                groupListModel.addElement(r);
-            }
-            if (lblGroupCountBadge != null) {
+            for (String r : rooms) groupListModel.addElement(r);
+            if (lblGroupCountBadge != null)
                 lblGroupCountBadge.setText("Các nhóm trò chuyện (" + rooms.size() + ")");
-            }
-            if (groupList != null) {
-                groupList.repaint();
-            }
+            if (groupList != null) groupList.repaint();
         });
     }
-
-    @Override
-    public void onSystemMessage(String message) {
+    @Override public void onSystemMessage(String message) {
         SwingUtilities.invokeLater(() -> addSystemMessage(message));
     }
-
-    @Override
-    public void onDisconnected(String reason) {
+    @Override public void onDisconnected(String reason) {
         SwingUtilities.invokeLater(() -> {
-            JOptionPane.showMessageDialog(
-                this,
+            JOptionPane.showMessageDialog(this,
                 "Mất kết nối tới Server!\n" + (reason != null ? reason : ""),
-                "Ngắt kết nối",
-                JOptionPane.WARNING_MESSAGE
-            );
+                "Ngắt kết nối", JOptionPane.WARNING_MESSAGE);
             this.dispose();
-            if (loginFrame != null) {
-                loginFrame.setVisible(true);
-            }
+            if (loginFrame != null) loginFrame.setVisible(true);
         });
     }
 
+    // ════════════════════════════════════════════════════════════════════════════
+    //  CELL RENDERERS
+    // ════════════════════════════════════════════════════════════════════════════
     private class UserCellRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
             String username = (String) value;
-            boolean isSelf = username.equalsIgnoreCase(client.getUsername());
+            boolean isSelf  = username.equalsIgnoreCase(client.getUsername());
 
-            JPanel itemPanel = new JPanel(new BorderLayout(8, 0));
-            itemPanel.setBorder(new EmptyBorder(6, 8, 6, 8));
-            itemPanel.setOpaque(true);
+            JPanel item = new JPanel(new BorderLayout(10, 0));
+            item.setBorder(new EmptyBorder(7, 10, 7, 10));
+            item.setOpaque(true);
+            item.setBackground(isSelected ? UIUtils.COLOR_PRIMARY_LIGHT : UIUtils.COLOR_BG_SIDEBAR);
 
-            if (isSelected) {
-                itemPanel.setBackground(UIUtils.COLOR_PRIMARY_LIGHT);
-            } else {
-                itemPanel.setBackground(UIUtils.COLOR_SURFACE);
-            }
+            item.add(UIUtils.createAvatarPanel(username, 30), BorderLayout.WEST);
 
-            itemPanel.add(createAvatarComponent(username, 28), BorderLayout.WEST);
+            JPanel nameCol = new JPanel();
+            nameCol.setLayout(new BoxLayout(nameCol, BoxLayout.Y_AXIS));
+            nameCol.setOpaque(false);
 
-            JPanel namePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-            namePanel.setOpaque(false);
+            JLabel nameLbl = new JLabel(username + (isSelf ? "  (Bạn)" : ""));
+            nameLbl.setFont(isSelf ? UIUtils.FONT_BOLD : UIUtils.FONT_REGULAR);
+            nameLbl.setForeground(isSelf ? UIUtils.COLOR_PRIMARY : UIUtils.COLOR_TEXT_PRIMARY);
+            nameCol.add(nameLbl);
 
-            JLabel lblName = new JLabel(username);
-            lblName.setFont(UIUtils.FONT_REGULAR);
-            lblName.setForeground(UIUtils.COLOR_TEXT_MAIN);
-            namePanel.add(lblName);
+            JLabel statusLbl = new JLabel("● Online");
+            statusLbl.setFont(UIUtils.FONT_TINY);
+            statusLbl.setForeground(UIUtils.COLOR_ONLINE);
+            nameCol.add(statusLbl);
 
-            if (isSelf) {
-                JLabel lblSelf = new JLabel("(Bạn)");
-                lblSelf.setFont(UIUtils.FONT_TINY);
-                lblSelf.setForeground(UIUtils.COLOR_PRIMARY);
-                namePanel.add(lblSelf);
-            }
-
-            itemPanel.add(namePanel, BorderLayout.CENTER);
-
-            JLabel lblDot = new JLabel("●");
-            lblDot.setFont(new Font("Segoe UI", Font.PLAIN, 10));
-            lblDot.setForeground(UIUtils.COLOR_ONLINE);
-            itemPanel.add(lblDot, BorderLayout.EAST);
-
-            return itemPanel;
+            item.add(nameCol, BorderLayout.CENTER);
+            return item;
         }
     }
 
@@ -792,57 +896,83 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             String roomName = (String) value;
             boolean isCurrent = roomName.equalsIgnoreCase(currentRoomName);
 
-            JPanel itemPanel = new JPanel(new BorderLayout(8, 0));
-            itemPanel.setBorder(new EmptyBorder(6, 8, 6, 8));
-            itemPanel.setOpaque(true);
+            JPanel item = new JPanel(new BorderLayout(10, 0));
+            item.setBorder(new EmptyBorder(8, 10, 8, 10));
+            item.setOpaque(true);
+            if (isSelected)        item.setBackground(UIUtils.COLOR_PRIMARY_LIGHT);
+            else if (isCurrent)    item.setBackground(new Color(25, 35, 50));
+            else                   item.setBackground(UIUtils.COLOR_BG_SIDEBAR);
 
-            if (isSelected) {
-                itemPanel.setBackground(UIUtils.COLOR_PRIMARY_LIGHT);
-            } else if (isCurrent) {
-                itemPanel.setBackground(new Color(240, 253, 244));
-            } else {
-                itemPanel.setBackground(UIUtils.COLOR_SURFACE);
-            }
-
-            JPanel iconPanel = new JPanel() {
-                @Override
-                protected void paintComponent(Graphics g) {
-                    super.paintComponent(g);
+            // Channel icon
+            JPanel icon = new JPanel() {
+                @Override protected void paintComponent(Graphics g) {
                     Graphics2D g2 = (Graphics2D) g.create();
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    g2.setColor(isCurrent ? UIUtils.COLOR_ONLINE : new Color(139, 92, 246));
-                    g2.fillOval(0, 0, 28, 28);
+                    Color ic = isCurrent ? UIUtils.COLOR_PRIMARY : UIUtils.COLOR_ACCENT_VIOLET;
+                    g2.setColor(new Color(ic.getRed(), ic.getGreen(), ic.getBlue(), 40));
+                    g2.fillOval(0, 0, 30, 30);
+                    g2.setColor(ic);
+                    g2.fillOval(3, 3, 24, 24);
                     g2.setColor(Color.WHITE);
                     g2.setFont(new Font("Segoe UI", Font.BOLD, 13));
                     FontMetrics fm = g2.getFontMetrics();
-                    int x = (28 - fm.stringWidth("#")) / 2;
-                    int y = (28 - fm.getHeight()) / 2 + fm.getAscent();
-                    g2.drawString("#", x, y);
+                    g2.drawString("#", (30 - fm.stringWidth("#")) / 2, (30 - fm.getHeight()) / 2 + fm.getAscent());
                     g2.dispose();
                 }
             };
-            iconPanel.setOpaque(false);
-            iconPanel.setPreferredSize(new Dimension(28, 28));
-            itemPanel.add(iconPanel, BorderLayout.WEST);
+            icon.setOpaque(false);
+            icon.setPreferredSize(new Dimension(30, 30));
+            item.add(icon, BorderLayout.WEST);
 
-            JPanel namePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-            namePanel.setOpaque(false);
+            JPanel nameCol = new JPanel();
+            nameCol.setLayout(new BoxLayout(nameCol, BoxLayout.Y_AXIS));
+            nameCol.setOpaque(false);
 
-            JLabel lblName = new JLabel(roomName);
-            lblName.setFont(UIUtils.FONT_REGULAR);
-            lblName.setForeground(UIUtils.COLOR_TEXT_MAIN);
-            namePanel.add(lblName);
+            JLabel nameLbl = new JLabel(roomName);
+            nameLbl.setFont(isCurrent ? UIUtils.FONT_BOLD : UIUtils.FONT_REGULAR);
+            nameLbl.setForeground(isCurrent ? UIUtils.COLOR_PRIMARY : UIUtils.COLOR_TEXT_PRIMARY);
+            nameCol.add(nameLbl);
 
             if (isCurrent) {
-                JLabel lblCurrent = new JLabel("(Đang tham gia)");
-                lblCurrent.setFont(UIUtils.FONT_TINY);
-                lblCurrent.setForeground(UIUtils.COLOR_ONLINE);
-                namePanel.add(lblCurrent);
+                JLabel curLbl = new JLabel("✓ Đang tham gia");
+                curLbl.setFont(UIUtils.FONT_TINY);
+                curLbl.setForeground(UIUtils.COLOR_ONLINE);
+                nameCol.add(curLbl);
             }
 
-            itemPanel.add(namePanel, BorderLayout.CENTER);
+            item.add(nameCol, BorderLayout.CENTER);
+            return item;
+        }
+    }
 
-            return itemPanel;
+    // ════════════════════════════════════════════════════════════════════════════
+    //  MODERN SCROLLBAR UI
+    // ════════════════════════════════════════════════════════════════════════════
+    private static class ModernScrollBarUI extends javax.swing.plaf.basic.BasicScrollBarUI {
+        @Override protected void configureScrollBarColors() {
+            this.thumbColor      = UIUtils.COLOR_SURFACE_3;
+            this.trackColor      = UIUtils.COLOR_SURFACE_1;
+        }
+        @Override protected JButton createDecreaseButton(int o) { return zeroButton(); }
+        @Override protected JButton createIncreaseButton(int o) { return zeroButton(); }
+        private JButton zeroButton() {
+            JButton b = new JButton();
+            b.setPreferredSize(new Dimension(0, 0));
+            b.setMinimumSize(new Dimension(0, 0));
+            b.setMaximumSize(new Dimension(0, 0));
+            return b;
+        }
+        @Override protected void paintThumb(Graphics g, JComponent c, Rectangle r) {
+            if (r.isEmpty()) return;
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(thumbColor);
+            g2.fill(new RoundRectangle2D.Float(r.x + 2, r.y + 2, r.width - 4, r.height - 4, 8, 8));
+            g2.dispose();
+        }
+        @Override protected void paintTrack(Graphics g, JComponent c, Rectangle r) {
+            g.setColor(trackColor);
+            g.fillRect(r.x, r.y, r.width, r.height);
         }
     }
 }
