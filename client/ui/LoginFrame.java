@@ -10,7 +10,7 @@ import java.awt.geom.*;
 import java.io.IOException;
 
 /**
- * LoginFrame - Màn hình Đăng nhập & Đăng ký Messenger Desktop Pro.
+ * LoginFrame - Màn hình Đăng nhập & Đăng ký TCP Chat.
  * Giao diện hai cột, form cuộn theo cửa sổ và trạng thái xác thực rõ ràng.
  */
 public class LoginFrame extends JFrame {
@@ -40,7 +40,7 @@ public class LoginFrame extends JFrame {
 
     private void initUI() {
         UIUtils.applyGlobalDefaults();
-        setTitle("Messenger · Đăng nhập");
+        setTitle("TCP Chat · Đăng nhập");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1040, 800);
         setMinimumSize(new Dimension(900, 700));
@@ -197,7 +197,7 @@ public class LoginFrame extends JFrame {
             }
         };
         panel.setBorder(new EmptyBorder(42, 42, 36, 36));
-        JLabel brand = label("  messenger", new Font("Segoe UI", Font.BOLD, 24), UIUtils.COLOR_TEXT_PRIMARY);
+        JLabel brand = label("  TCP Chat", new Font("Segoe UI", Font.BOLD, 24), UIUtils.COLOR_TEXT_PRIMARY);
         brand.setIcon(UIUtils.icon("chat", 30));
         panel.add(brand, BorderLayout.NORTH);
         JPanel story = new JPanel();
@@ -233,7 +233,7 @@ public class LoginFrame extends JFrame {
         story.add(label("Nhắn tin  /  Gọi thoại & video  /  Chia sẻ file", UIUtils.FONT_SMALL, UIUtils.COLOR_TEXT_SECONDARY));
         story.add(Box.createVerticalGlue());
         panel.add(story, BorderLayout.CENTER);
-        panel.add(label("MESSENGER DESKTOP", UIUtils.FONT_SMALL, UIUtils.COLOR_TEXT_MUTED), BorderLayout.SOUTH);
+        panel.add(label("TCP CHAT", UIUtils.FONT_SMALL, UIUtils.COLOR_TEXT_MUTED), BorderLayout.SOUTH);
         return panel;
     }
 
@@ -274,10 +274,10 @@ public class LoginFrame extends JFrame {
 
         if (registerMode) {
             btnSubmit.setText("Tạo tài khoản");
-            setTitle("Messenger Desktop Pro — Đăng ký tài khoản");
+            setTitle("TCP Chat — Đăng ký tài khoản");
         } else {
             btnSubmit.setText("Đăng nhập");
-            setTitle("Messenger Desktop Pro — Đăng nhập");
+            setTitle("TCP Chat — Đăng nhập");
         }
 
         lblStatus.setText(" ");

@@ -1,4 +1,4 @@
-# ChatRoom TCP Socket
+# TCP Chat
 
 Ứng dụng chat desktop bằng Java Swing, sử dụng TCP và SQLite. Có chat theo
 phòng, tin nhắn riêng, lịch sử, bạn bè, sửa/thu hồi tin nhắn, reaction,
@@ -39,13 +39,25 @@ Nếu PowerShell chặn script do chính sách trên máy, có thể chạy từ
 powershell -ExecutionPolicy Bypass -File .\dev.ps1 test
 ```
 
+## Gọi video
+
+Chọn một người đang trực tuyến, rồi bấm biểu tượng camera. Người nhận sẽ thấy
+cửa sổ **Cuộc gọi đến**. Bấm **Chấp nhận** để mở cửa sổ video và bật webcam.
+Nếu camera không mở được, kiểm tra **Cài đặt → Quyền riêng tư và bảo mật →
+Camera** trên Windows, cho phép ứng dụng desktop dùng camera và bấm lại nút camera.
+
+Luồng hình ảnh và âm thanh truyền trực tiếp qua UDP. Hai máy nên ở cùng mạng
+nội bộ và được tường lửa cho phép trao đổi UDP. Kết nối qua Internet có NAT
+có thể cần thêm máy chủ chuyển tiếp. Sau khi cập nhật, chạy lại cả máy chủ và
+ứng dụng khách để hai bên dùng cùng giao thức cuộc gọi.
+
 ## Kiểm thử
 
 ```powershell
 .\dev.ps1 test
 ```
 
-Script biên dịch toàn bộ mã và chạy tám bộ kiểm thử tuần tự. Mỗi bộ dùng một
+Script biên dịch toàn bộ mã và chạy chín bộ kiểm thử tuần tự. Mỗi bộ dùng một
 cổng tạm và một cơ sở dữ liệu riêng trong `build/`, không ghi vào lịch sử chat
 thật trong `data/messenger.db`. Nếu có bộ thất bại, script dừng và báo lỗi.
 

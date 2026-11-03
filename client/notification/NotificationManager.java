@@ -47,11 +47,11 @@ public class NotificationManager {
             MenuItem dndItem = new MenuItem("Bật/Tắt Không làm phiền");
             dndItem.addActionListener(e -> {
                 doNotDisturb = !doNotDisturb;
-                notifyMessage("Messenger Pro", doNotDisturb ? "Đã bật chế độ Không làm phiền." : "Đã tắt Không làm phiền.");
+                notifyMessage("TCP Chat", doNotDisturb ? "Đã bật chế độ Không làm phiền." : "Đã tắt Không làm phiền.");
             });
             popup.add(dndItem);
 
-            trayIcon = new TrayIcon(iconImage, "Messenger Desktop Pro", popup);
+            trayIcon = new TrayIcon(iconImage, "TCP Chat", popup);
             trayIcon.setImageAutoSize(true);
             tray.add(trayIcon);
             systemTraySupported = true;

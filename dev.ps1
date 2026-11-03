@@ -9,6 +9,10 @@ try {
     $sources = @(Get-ChildItem client,server,shared,test -Recurse -Filter *.java | ForEach-Object FullName)
     & javac -encoding UTF-8 -d build/classes @sources
     if ($LASTEXITCODE -ne 0) { throw 'Compilation failed. Install JDK 23 or newer.' }
+    if ($env:OS -eq 'Windows_NT') {
+        & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 'client/media/video/windows-camera.ps1' -Build
+        if ($LASTEXITCODE -ne 0) { throw 'Windows camera helper compilation failed.' }
+    }
     $classpath = 'build/classes;lib/*'
     switch ($Action) {
         'test' {

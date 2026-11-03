@@ -537,11 +537,20 @@ public class ClientHandler implements Runnable {
     private void handleCallSignaling(Packet packet) {
         String recipient = packet.getRecipient();
         if (recipient == null || recipient.trim().isEmpty()) return;
+        if (recipient.trim().equalsIgnoreCase(username)) return;
+        if (packet.getType() == Packet.Type.CALL_OFFER || packet.getType() == Packet.Type.CALL_ANSWER) {
+            try {
+                var endpoint = shared.protocol.CallEndpoint.parse(packet.getExtra());
+                packet.setExtra(endpoint.ports() + "," + socket.getInetAddress().getHostAddress());
+            } catch (IllegalArgumentException e) {
+                return;
+            }
+        }
         packet.setSender(username);
         ClientHandler target = clientManager.getClient(recipient.trim());
         if (target != null) {
             target.sendPacket(packet);
-        } else {
+        } else if (packet.getType() == Packet.Type.CALL_OFFER) {
             Packet rejected = new Packet(Packet.Type.CALL_REJECT, "SERVER", username, "Người dùng không trực tuyến");
             rejected.setId(packet.getId());
             rejected.setExtra("OFFLINE");

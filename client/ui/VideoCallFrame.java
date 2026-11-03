@@ -39,6 +39,8 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
     private JButton btnScreenShare;
     private JButton btnEndCall;
 
+    private boolean connected;
+    private String cameraStatus = "Đang mở camera…";
     private boolean isMuted = false;
     private boolean isCameraOn = true;
     private boolean isSharingScreen = false;
@@ -59,7 +61,7 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
     }
 
     private void initUI() {
-        setTitle("Messenger Video Call  ·  @" + peerUsername);
+        setTitle("TCP Chat · Gọi video  ·  @" + peerUsername);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setSize(960, 640);
         setMinimumSize(new Dimension(800, 520));
@@ -97,13 +99,13 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
                     g2.fillRect(0, 0, getWidth(), getHeight());
                     g2.setColor(Color.WHITE);
                     g2.setFont(new Font("Segoe UI", Font.BOLD, 22));
-                    String text = "Đang kết nối luồng video với @" + peerUsername + "...";
+                    String text = connected ? "Đang chờ hình ảnh từ @" + peerUsername : "Đang gọi @" + peerUsername + "…";
                     FontMetrics fm = g2.getFontMetrics();
                     g2.drawString(text, (getWidth() - fm.stringWidth(text)) / 2, getHeight() / 2 - 20);
 
                     g2.setColor(new Color(148, 163, 184));
                     g2.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-                    String sub = "Chất lượng HD · Độ trễ thấp UDP";
+                    String sub = connected ? cameraStatus : "Camera sẽ mở khi người nhận chấp nhận.";
                     fm = g2.getFontMetrics();
                     g2.drawString(sub, (getWidth() - fm.stringWidth(sub)) / 2, getHeight() / 2 + 15);
                 }
@@ -138,6 +140,12 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
                 g2.setColor(Color.WHITE);
                 g2.setFont(new Font("Segoe UI", Font.BOLD, 10));
                 g2.drawString("Bạn", 18, 19);
+                if (connected && cameraStatus != null && (!cameraStatus.isEmpty())) {
+                    g2.setColor(new Color(0, 0, 0, 200));
+                    g2.fillRect(0, getHeight() - 26, getWidth(), 26);
+                    g2.setColor(Color.WHITE);
+                    g2.drawString(cameraStatus, 8, getHeight() - 10);
+                }
 
                 g2.dispose();
             }
@@ -162,7 +170,7 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
                 pipPreviewPanel.setBounds(w - pipW - 24, h - pipH - 96, pipW, pipH);
 
                 // Control bar đặt giữa đáy
-                int cbW = 440, cbH = 64;
+                int cbW = 558, cbH = 64;
                 controlBar.setBounds((w - cbW) / 2, h - cbH - 20, cbW, cbH);
             }
         });
@@ -187,19 +195,19 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
         bar.setLayout(new FlowLayout(FlowLayout.CENTER, 14, 10));
 
         // Nút Mic
-        btnMute = createCircleButton("🎙️", new Color(51, 65, 85));
+        btnMute = createCallButton("Mic", new Color(51, 65, 85));
         btnMute.setToolTipText("Bật/Tắt Micro");
         btnMute.addActionListener(e -> toggleMute());
         bar.add(btnMute);
 
         // Nút Camera
-        btnCamera = createCircleButton("📹", new Color(51, 65, 85));
+        btnCamera = createCallButton("Camera", new Color(51, 65, 85));
         btnCamera.setToolTipText("Bật/Tắt Camera");
         btnCamera.addActionListener(e -> toggleCamera());
         bar.add(btnCamera);
 
         // Nút Chia sẻ màn hình
-        btnScreenShare = createCircleButton("🖥️", new Color(51, 65, 85));
+        btnScreenShare = createCallButton("Chia sẻ", new Color(51, 65, 85));
         btnScreenShare.setToolTipText("Chia sẻ toàn màn hình");
         btnScreenShare.addActionListener(e -> toggleScreenShare());
         bar.add(btnScreenShare);
@@ -212,7 +220,7 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
         bar.add(lblDuration);
 
         // Nút Kết thúc cuộc gọi
-        btnEndCall = createCircleButton("📞", new Color(239, 68, 68));
+        btnEndCall = createCallButton("Cúp máy", new Color(239, 68, 68));
         btnEndCall.setToolTipText("Kết thúc cuộc gọi");
         btnEndCall.addActionListener(e -> performEndCall());
         bar.add(btnEndCall);
@@ -220,25 +228,34 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
         return bar;
     }
 
-    private JButton createCircleButton(String iconText, Color bgColor) {
-        JButton btn = new JButton(iconText) {
+    private JButton createCallButton(String caption, Color bgColor) {
+        JButton btn = new JButton(caption) {
             @Override protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setColor(getModel().isArmed() ? bgColor.darker() : bgColor);
-                g2.fillOval(0, 0, getWidth(), getHeight());
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 20, 20);
                 g2.dispose();
                 super.paintComponent(g);
             }
         };
-        btn.setPreferredSize(new Dimension(44, 44));
-        btn.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 18));
+        btn.setPreferredSize(new Dimension(92, 44));
+        btn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         btn.setForeground(Color.WHITE);
         btn.setContentAreaFilled(false);
         btn.setBorderPainted(false);
+        btn.setMargin(new Insets(0, 0, 0, 0));
         btn.setFocusPainted(false);
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
         return btn;
+    }
+
+    public void setConnected(boolean connected) {
+        this.connected = connected;
+        btnCamera.setEnabled(connected);
+        btnScreenShare.setEnabled(connected);
+        btnMute.setEnabled(connected);
+        mainVideoPanel.repaint();
     }
 
     private void toggleMute() {
@@ -246,28 +263,37 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
         if (audioEngine != null) {
             audioEngine.setMuted(isMuted);
         }
-        btnMute.setText(isMuted ? "🔇" : "🎙️");
+        btnMute.setText(isMuted ? "Mic tắt" : "Mic");
         btnMute.setBackground(isMuted ? new Color(185, 28, 28) : new Color(51, 65, 85));
     }
 
     private void toggleCamera() {
         isCameraOn = !isCameraOn;
+        isSharingScreen = false;
+        btnScreenShare.setText("Chia sẻ");
+        localImage = null;
+        cameraStatus = isCameraOn ? "Đang mở camera…" : "Camera đã tắt";
+        pipPreviewPanel.repaint();
         if (videoEngine != null) {
             if (!isCameraOn) {
                 videoEngine.setVideoMode(VideoCallEngine.VideoMode.OFF);
             } else {
-                videoEngine.setVideoMode(isSharingScreen ? VideoCallEngine.VideoMode.SCREEN_SHARE : VideoCallEngine.VideoMode.CAMERA);
+                videoEngine.setVideoMode(VideoCallEngine.VideoMode.CAMERA);
             }
         }
-        btnCamera.setText(isCameraOn ? "📹" : "🚫");
+        btnCamera.setText(isCameraOn ? "Camera" : "Bật camera");
+        btnCamera.setToolTipText("Bật/Tắt Camera");
     }
 
     private void toggleScreenShare() {
         isSharingScreen = !isSharingScreen;
+        localImage = null;
+        cameraStatus = isSharingScreen ? "" : (isCameraOn ? "Đang mở camera…" : "Camera đã tắt");
         if (videoEngine != null) {
-            videoEngine.setVideoMode(isSharingScreen ? VideoCallEngine.VideoMode.SCREEN_SHARE : VideoCallEngine.VideoMode.CAMERA);
+            videoEngine.setVideoMode(isSharingScreen ? VideoCallEngine.VideoMode.SCREEN_SHARE
+                    : (isCameraOn ? VideoCallEngine.VideoMode.CAMERA : VideoCallEngine.VideoMode.OFF));
         }
-        btnScreenShare.setBackground(isSharingScreen ? new Color(37, 99, 235) : new Color(51, 65, 85));
+        btnScreenShare.setText(isSharingScreen ? "Dừng chia sẻ" : "Chia sẻ");
     }
 
     private void performEndCall() {
@@ -283,14 +309,29 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
     // ── VideoFrameListener ───────────────────────────────────────────────────────
     @Override
     public void onRemoteFrameReceived(BufferedImage frame) {
-        this.remoteImage = frame;
-        SwingUtilities.invokeLater(() -> mainVideoPanel.repaint());
+        SwingUtilities.invokeLater(() -> { remoteImage = frame; mainVideoPanel.repaint(); });
     }
 
     @Override
     public void onLocalPreviewFrame(BufferedImage frame) {
-        this.localImage = frame;
-        SwingUtilities.invokeLater(() -> pipPreviewPanel.repaint());
+        SwingUtilities.invokeLater(() -> {
+            localImage = frame;
+            if (videoEngine.getCurrentMode() == VideoCallEngine.VideoMode.CAMERA) cameraStatus = "";
+            pipPreviewPanel.repaint();
+            mainVideoPanel.repaint();
+        });
+    }
+
+    @Override public void onCameraUnavailable() {
+        SwingUtilities.invokeLater(() -> {
+            if (!isDisplayable() || videoEngine.getCurrentMode() != VideoCallEngine.VideoMode.OFF) return;
+            isCameraOn = false;
+            btnCamera.setText("Thử lại");
+            btnCamera.setToolTipText("Kiểm tra camera và quyền Windows, rồi bấm để thử lại");
+            cameraStatus = "Không mở được camera";
+            pipPreviewPanel.repaint();
+            mainVideoPanel.repaint();
+        });
     }
 
     @Override
@@ -312,7 +353,7 @@ public class VideoCallFrame extends JFrame implements VideoCallEngine.VideoFrame
 
     @Override public void onCallStateChanged(AudioCallEngine.CallState newState, String peer) {
         if (newState == AudioCallEngine.CallState.ENDED) {
-            SwingUtilities.invokeLater(this::performEndCall);
+            SwingUtilities.invokeLater(this::dispose);
         }
     }
     @Override public void onIncomingCall(String caller, int callerPort) {}

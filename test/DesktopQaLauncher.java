@@ -37,12 +37,12 @@ public final class DesktopQaLauncher {
             catch (Exception ignored) {}
             UIUtils.applyGlobalDefaults();
             LoginFrame login = new LoginFrame();
-            login.setTitle("QA · Login · Messenger");
+            login.setTitle("QA · Login · TCP Chat");
             login.setVisible(true);
             ChatFrame a = new ChatFrame(alice, null);
             ChatFrame b = new ChatFrame(bob, null);
-            a.setTitle("QA · Alice · Messenger");
-            b.setTitle("QA · Bob · Messenger");
+            a.setTitle("QA · Alice · TCP Chat");
+            b.setTitle("QA · Bob · TCP Chat");
             a.setVisible(true);
             b.setVisible(true);
         });

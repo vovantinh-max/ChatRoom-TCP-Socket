@@ -27,7 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * ChatFrame — Giao diện chính của Messenger Desktop Pro.
+ * ChatFrame — Giao diện chính của TCP Chat.
  * Hỗ trợ Chat Nhóm, Chat Riêng, Hệ thống Bạn bè (Online/Offline), Lời mời kết bạn,
  * Tìm kiếm người dùng, bong bóng tin nhắn, Emoji, và Toast notification.
  */
@@ -44,6 +44,9 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     // Call and Media Engines
     private AudioCallEngine     audioEngine;
     private VideoCallEngine     videoEngine;
+    private VideoCallFrame videoCallWindow;
+    private JDialog incomingCallWindow;
+    private javax.swing.Timer callTimeout;
     private FileTransferEngine  fileTransferEngine;
     private NotificationManager notificationManager;
 
@@ -130,7 +133,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
 
     private void initUI() {
-        setTitle("Messenger Desktop Pro  ·  " + client.getUsername());
+        setTitle("TCP Chat  ·  " + client.getUsername());
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setSize(1220, 820);
         setMinimumSize(new Dimension(960, 660));
@@ -324,7 +327,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         sidebarTop.setLayout(new BoxLayout(sidebarTop, BoxLayout.Y_AXIS));
         sidebarTop.setOpaque(false);
         sidebarTop.setBorder(new EmptyBorder(26, 18, 14, 18));
-        JLabel brand = new JLabel("  messenger");
+        JLabel brand = new JLabel("  TCP Chat");
         brand.setIcon(UIUtils.icon("chat", 25));
         brand.setForeground(UIUtils.COLOR_TEXT_PRIMARY);
         brand.setFont(new Font("Segoe UI", Font.BOLD, 23));
@@ -823,7 +826,11 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             JOptionPane.showMessageDialog(this, "Vui lòng chọn một người bạn hoặc thành viên cụ thể để gọi thoại 1-1.", "Chọn người nhận", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        audioEngine.startCall(sel);
+        if (!audioEngine.startCall(sel)) {
+            showToast("Không thể bắt đầu cuộc gọi. Hãy kết thúc cuộc gọi hiện tại trước.", UIUtils.COLOR_DANGER);
+            return;
+        }
+        startCallTimeout();
         showToast("Đang gọi thoại tới @" + sel + "...", UIUtils.COLOR_ONLINE);
     }
 
@@ -833,11 +840,68 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
             JOptionPane.showMessageDialog(this, "Vui lòng chọn một người bạn hoặc thành viên cụ thể để gọi video 1-1.", "Chọn người nhận", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        VideoCallFrame vf = new VideoCallFrame(sel, audioEngine, videoEngine);
-        vf.setVisible(true);
-        audioEngine.startCall(sel);
-        videoEngine.initVideoPort();
-        showToast("Đang gọi video tới @" + sel + "...", UIUtils.COLOR_ACCENT_VIOLET);
+        if (audioEngine.getState() != AudioCallEngine.CallState.IDLE) {
+            showToast("Bạn đang có cuộc gọi khác.", UIUtils.COLOR_DANGER);
+            return;
+        }
+        if (!videoEngine.initVideoPort() || !audioEngine.startCall(sel, videoEngine.getLocalVideoPort())) {
+            videoEngine.stopVideo();
+            showToast("Không thể bắt đầu gọi video.", UIUtils.COLOR_DANGER);
+            return;
+        }
+        openVideoCall(sel, false);
+        startCallTimeout();
+    }
+
+    private void openVideoCall(String peer, boolean connected) {
+        videoEngine.setVideoMode(VideoCallEngine.VideoMode.CAMERA);
+        videoCallWindow = new VideoCallFrame(peer, audioEngine, videoEngine);
+        videoCallWindow.setConnected(connected);
+        VideoCallFrame window = videoCallWindow;
+        window.setAlwaysOnTop(connected);
+        window.setVisible(true);
+        window.toFront();
+        window.requestFocus();
+        if (connected) {
+            javax.swing.Timer foreground = new javax.swing.Timer(500, e -> window.setAlwaysOnTop(false));
+            foreground.setRepeats(false);
+            foreground.start();
+        }
+    }
+
+    private void startCallTimeout() {
+        stopCallTimeout();
+        callTimeout = new javax.swing.Timer(30_000, e -> {
+            if (audioEngine.getState() == AudioCallEngine.CallState.CALLING) {
+                endCallWindows();
+                showToast("Không có phản hồi từ người nhận.", UIUtils.COLOR_DANGER);
+            }
+        });
+        callTimeout.setRepeats(false);
+        callTimeout.start();
+    }
+
+    private void stopCallTimeout() {
+        if (callTimeout != null) callTimeout.stop();
+    }
+
+    private void closeIncomingCall() {
+        notificationManager.stopRingtone();
+        if (incomingCallWindow != null) {
+            incomingCallWindow.dispose();
+            incomingCallWindow = null;
+        }
+    }
+
+    private void endCallWindows() {
+        stopCallTimeout();
+        closeIncomingCall();
+        audioEngine.endCall();
+        videoEngine.stopVideo();
+        if (videoCallWindow != null) {
+            videoCallWindow.dispose();
+            videoCallWindow = null;
+        }
     }
 
     // ── Dialog: Tìm kiếm & Kết bạn ──────────────────────────────────────────────
@@ -1059,6 +1123,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         int confirm = JOptionPane.showConfirmDialog(this,
             "Bạn có chắc chắn muốn đăng xuất?", "Xác nhận đăng xuất", JOptionPane.YES_NO_OPTION);
         if (confirm == JOptionPane.YES_OPTION) {
+            endCallWindows();
             client.logout();
             if (friendsDialog != null) friendsDialog.dispose();
             this.dispose();
@@ -1596,42 +1661,92 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
         });
     }
     @Override public void onCallPacketReceived(Packet packet) {
-        if (packet == null) return;
-        audioEngine.handleSignalingPacket(packet);
-
-        if (packet.getType() == Packet.Type.CALL_OFFER) {
-            String caller = packet.getSender();
-            String callType = packet.getContent();
-            int callerPort = 0;
-            try { callerPort = Integer.parseInt(packet.getExtra()); } catch (Exception ignored) {}
-
-            notificationManager.startRingtone();
-            final int finalPort = callerPort;
-            SwingUtilities.invokeLater(() -> {
-                int choice = JOptionPane.showConfirmDialog(
-                    this,
-                    "@" + caller + " đang gọi " + ("VIDEO".equalsIgnoreCase(callType) ? "video" : "thoại") + " cho bạn.\nBạn có đồng ý nhận cuộc gọi?",
-                    "Cuộc gọi đến",
-                    JOptionPane.YES_NO_OPTION,
-                    JOptionPane.QUESTION_MESSAGE
-                );
-                notificationManager.stopRingtone();
-                if (choice == JOptionPane.YES_OPTION) {
-                    if ("VIDEO".equalsIgnoreCase(callType)) {
-                        VideoCallFrame vf = new VideoCallFrame(caller, audioEngine, videoEngine);
-                        vf.setVisible(true);
-                        audioEngine.acceptCall(caller, finalPort, "127.0.0.1");
-                        videoEngine.startVideoStreaming(caller, "127.0.0.1", finalPort);
+        SwingUtilities.invokeLater(() -> {
+            if (!isDisplayable() || !audioEngine.handleSignalingPacket(packet)) return;
+            String peer = packet.getSender();
+            switch (packet.getType()) {
+                case CALL_OFFER -> showIncomingCall(peer, shared.protocol.CallEndpoint.parse(packet.getExtra()));
+                case CALL_ANSWER -> {
+                    stopCallTimeout();
+                    var endpoint = shared.protocol.CallEndpoint.parse(packet.getExtra());
+                    if (endpoint.videoPort() != 0 && videoCallWindow != null) {
+                        videoCallWindow.setConnected(true);
+                        if (!videoEngine.startVideoStreaming(peer, endpoint.host(), endpoint.videoPort())) {
+                            endCallWindows();
+                            showToast("Không thể kết nối video.", UIUtils.COLOR_DANGER);
+                        }
                     } else {
-                        audioEngine.acceptCall(caller, finalPort, "127.0.0.1");
-                        showToast("Đã kết nối cuộc gọi thoại với @" + caller, UIUtils.COLOR_ONLINE);
+                        showToast("Đã kết nối cuộc gọi với @" + peer, UIUtils.COLOR_ONLINE);
                     }
-                } else {
-                    audioEngine.rejectCall(caller, "BUSY");
                 }
-            });
-        }
+                case CALL_REJECT, CALL_END -> {
+                    endCallWindows();
+                    showToast(packet.getType() == Packet.Type.CALL_END ? "Cuộc gọi đã kết thúc."
+                            : "Người nhận không thể nhận cuộc gọi.", UIUtils.COLOR_TEXT_MUTED);
+                }
+                default -> {}
+            }
+        });
     }
+
+    private void showIncomingCall(String peer, shared.protocol.CallEndpoint endpoint) {
+        boolean video = endpoint.videoPort() != 0;
+        JDialog dialog = new JDialog((Frame) null, "TCP Chat · Cuộc gọi đến", false);
+        incomingCallWindow = dialog;
+        dialog.setAlwaysOnTop(true);
+        dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        JButton accept = new JButton("Chấp nhận");
+        JButton reject = new JButton("Từ chối");
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        actions.add(reject);
+        actions.add(accept);
+        JPanel panel = new JPanel(new BorderLayout(0, 14));
+        panel.setBorder(BorderFactory.createEmptyBorder(18, 20, 12, 20));
+        panel.add(new JLabel("@" + peer + " đang gọi " + (video ? "video" : "thoại") + " cho bạn."), BorderLayout.CENTER);
+        panel.add(actions, BorderLayout.SOUTH);
+        Runnable decline = () -> {
+            if (incomingCallWindow != dialog) return;
+            closeIncomingCall();
+            audioEngine.rejectCall(peer, "DECLINED");
+        };
+        reject.addActionListener(e -> decline.run());
+        dialog.addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { decline.run(); }
+        });
+        accept.addActionListener(e -> {
+            if (incomingCallWindow != dialog) return;
+            closeIncomingCall();
+            if (video && !videoEngine.initVideoPort()) {
+                audioEngine.rejectCall(peer, "MEDIA_UNAVAILABLE");
+                showToast("Không thể mở cổng video.", UIUtils.COLOR_DANGER);
+                return;
+            }
+            if (!audioEngine.acceptCall(peer, endpoint, video ? videoEngine.getLocalVideoPort() : 0)) {
+                endCallWindows();
+                showToast("Không thể nhận cuộc gọi.", UIUtils.COLOR_DANGER);
+                return;
+            }
+            if (video) {
+                openVideoCall(peer, true);
+                if (!videoEngine.startVideoStreaming(peer, endpoint.host(), endpoint.videoPort())) {
+                    endCallWindows();
+                    showToast("Không thể kết nối video.", UIUtils.COLOR_DANGER);
+                }
+            } else {
+                showToast("Đã kết nối cuộc gọi thoại với @" + peer, UIUtils.COLOR_ONLINE);
+            }
+        });
+        dialog.setContentPane(panel);
+        dialog.getRootPane().setDefaultButton(accept);
+        dialog.pack();
+        dialog.setMinimumSize(new Dimension(360, 130));
+        dialog.setSize(dialog.getMinimumSize().width, Math.max(dialog.getHeight(), 130));
+        dialog.setLocationRelativeTo(isShowing() ? this : null);
+        notificationManager.startRingtone();
+        dialog.setVisible(true);
+        dialog.toFront();
+    }
+
     @Override public void onFilePacketReceived(Packet packet) {
         if (packet == null) return;
         fileTransferEngine.handleIncomingPacket(packet);
@@ -1723,6 +1838,7 @@ public class ChatFrame extends JFrame implements ChatClient.ChatEventListener {
     }
     @Override public void onDisconnected(String reason) {
         SwingUtilities.invokeLater(() -> {
+            endCallWindows();
             JOptionPane.showMessageDialog(this,
                 "Mất kết nối tới Server!\n" + (reason != null ? reason : ""),
                 "Ngắt kết nối", JOptionPane.WARNING_MESSAGE);

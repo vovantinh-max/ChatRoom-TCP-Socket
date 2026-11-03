@@ -37,6 +37,7 @@ public class VideoCallEngine {
         void onRemoteFrameReceived(BufferedImage frame);
         void onLocalPreviewFrame(BufferedImage frame);
         void onVideoCallEnded(String reason);
+        default void onCameraUnavailable() {}
     }
 
     private static final int MAX_UDP_PAYLOAD = 60000; // An toàn dưới 64KB UDP limit
@@ -44,8 +45,8 @@ public class VideoCallEngine {
     private static final int TARGET_HEIGHT = 480;
     private static final int FPS = 20;
 
-    private final ChatClient client;
-    private VideoFrameListener frameListener;
+    private WindowsCamera camera;
+    private volatile VideoFrameListener frameListener;
 
     private DatagramSocket videoSocket;
     private int localVideoPort = 0;
@@ -55,7 +56,7 @@ public class VideoCallEngine {
 
     private final AtomicBoolean isStreaming = new AtomicBoolean(false);
     private final AtomicBoolean isReceiving = new AtomicBoolean(false);
-    private VideoMode currentMode = VideoMode.CAMERA;
+    private volatile VideoMode currentMode = VideoMode.CAMERA;
 
     private Thread captureThread;
     private Thread receiveThread;
@@ -67,7 +68,6 @@ public class VideoCallEngine {
     private int currentFrameId = 0;
 
     public VideoCallEngine(ChatClient client) {
-        this.client = client;
         try {
             this.robot = new Robot();
         } catch (AWTException ignored) {}
@@ -81,8 +81,16 @@ public class VideoCallEngine {
         return currentMode;
     }
 
-    public void setVideoMode(VideoMode mode) {
+    public synchronized void setVideoMode(VideoMode mode) {
         this.currentMode = mode;
+        if (mode != VideoMode.CAMERA) closeCamera();
+    }
+
+    private void closeCamera() {
+        if (camera != null) {
+            camera.close();
+            camera = null;
+        }
     }
 
     public int getLocalVideoPort() {
@@ -104,31 +112,35 @@ public class VideoCallEngine {
     /**
      * Bắt đầu phiên truyền video tới peer.
      */
-    public synchronized void startVideoStreaming(String peer, String peerHost, int peerVideoPort) {
+    public synchronized boolean startVideoStreaming(String peer, String peerHost, int peerVideoPort) {
+        if (peerVideoPort <= 0 || peerVideoPort > 65535 || isStreaming.get()) return false;
         this.currentPeer = peer;
         this.remoteVideoPort = peerVideoPort;
         try {
             this.remoteAddress = InetAddress.getByName(peerHost != null ? peerHost : "127.0.0.1");
-        } catch (UnknownHostException e) {
-            return;
+            if (!initVideoPort()) return false;
+            videoSocket.connect(remoteAddress, remoteVideoPort);
+        } catch (UnknownHostException | java.io.UncheckedIOException e) {
+            stopVideo();
+            return false;
         }
-
-        initVideoPort();
         startReceiver();
         startCapturer();
+        return true;
     }
 
     /**
      * Bắt đầu nhận video.
      */
     private void startReceiver() {
+        DatagramSocket socket = videoSocket;
         isReceiving.set(true);
         receiveThread = Thread.ofVirtual().name("VideoReceiver-" + currentPeer).start(() -> {
             byte[] packetBuffer = new byte[65535];
-            while (isReceiving.get() && videoSocket != null && !videoSocket.isClosed()) {
+            while (!socket.isClosed()) {
                 try {
                     DatagramPacket packet = new DatagramPacket(packetBuffer, packetBuffer.length);
-                    videoSocket.receive(packet);
+                    socket.receive(packet);
 
                     byte[] data = packet.getData();
                     int len = packet.getLength();
@@ -139,11 +151,15 @@ public class VideoCallEngine {
                     int chunkIndex = ((data[4] & 0xFF) << 8) | (data[5] & 0xFF);
                     int totalChunks = ((data[6] & 0xFF) << 8) | (data[7] & 0xFF);
 
+                    if (totalChunks < 1 || totalChunks > 32 || chunkIndex >= totalChunks) continue;
+
                     int payloadLen = len - 8;
                     byte[] payload = new byte[payloadLen];
                     System.arraycopy(data, 8, payload, 0, payloadLen);
 
-                    frameAssembly.computeIfAbsent(frameId, k -> new byte[totalChunks][])[chunkIndex] = payload;
+                    byte[][] assembly = frameAssembly.computeIfAbsent(frameId, k -> new byte[totalChunks][]);
+                    if (assembly.length != totalChunks || assembly[chunkIndex] != null) continue;
+                    assembly[chunkIndex] = payload;
                     int count = frameChunksCount.merge(frameId, 1, Integer::sum);
 
                     if (count == totalChunks) {
@@ -187,24 +203,25 @@ public class VideoCallEngine {
      * Bắt đầu luồng chụp hình và gửi video đi.
      */
     private void startCapturer() {
+        DatagramSocket socket = videoSocket;
         isStreaming.set(true);
         captureThread = Thread.ofVirtual().name("VideoCapturer-" + currentPeer).start(() -> {
             long frameIntervalMs = 1000 / FPS;
 
-            while (isStreaming.get() && videoSocket != null && !videoSocket.isClosed()) {
+            while (!socket.isClosed()) {
                 long start = System.currentTimeMillis();
 
                 try {
-                    BufferedImage frame = captureCurrentFrame();
-                    if (frame != null) {
+                    BufferedImage frame = captureCurrentFrame(socket);
+                    if (frame != null && !socket.isClosed()) {
                         // Gửi xem trước cho bản thân (local preview)
                         if (frameListener != null) {
                             frameListener.onLocalPreviewFrame(frame);
                         }
 
                         // Nén và gửi qua mạng nếu có địa chỉ người nhận
-                        if (remoteAddress != null && remoteVideoPort > 0 && currentMode != VideoMode.OFF) {
-                            sendFrameOverUdp(frame);
+                        if (!socket.isClosed()) {
+                            sendFrameOverUdp(socket, frame);
                         }
                     }
                 } catch (Exception ignored) {}
@@ -218,11 +235,11 @@ public class VideoCallEngine {
         });
     }
 
-    private BufferedImage captureCurrentFrame() {
-        if (currentMode == VideoMode.OFF) {
-            return generateOffFrame();
-        } else if (currentMode == VideoMode.SCREEN_SHARE && robot != null) {
-            // Chụp toàn màn hình và thu nhỏ xuống TARGET_WIDTH x TARGET_HEIGHT
+    private BufferedImage captureCurrentFrame(DatagramSocket socket) {
+        VideoMode mode = currentMode;
+        if (mode == VideoMode.OFF) return generateOffFrame();
+        if (mode == VideoMode.SCREEN_SHARE) {
+            if (robot == null) return generateOffFrame();
             Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
             BufferedImage fullScreen = robot.createScreenCapture(new Rectangle(0, 0, screen.width, screen.height));
             BufferedImage scaled = new BufferedImage(TARGET_WIDTH, TARGET_HEIGHT, BufferedImage.TYPE_INT_RGB);
@@ -231,47 +248,20 @@ public class VideoCallEngine {
             g2.drawImage(fullScreen, 0, 0, TARGET_WIDTH, TARGET_HEIGHT, null);
             g2.dispose();
             return scaled;
-        } else {
-            // Camera Mode: Tạo live camera frame chất lượng cao
-            return generateLiveCameraFrame();
         }
-    }
-
-    private BufferedImage generateLiveCameraFrame() {
-        BufferedImage img = new BufferedImage(TARGET_WIDTH, TARGET_HEIGHT, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g2 = img.createGraphics();
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-        // Nền gradient camera chuyên nghiệp
-        GradientPaint gp = new GradientPaint(0, 0, new Color(20, 24, 38), TARGET_WIDTH, TARGET_HEIGHT, new Color(35, 45, 68));
-        g2.setPaint(gp);
-        g2.fillRect(0, 0, TARGET_WIDTH, TARGET_HEIGHT);
-
-        // Hiệu ứng sóng radar camera
-        long now = System.currentTimeMillis();
-        int pulse = (int) ((now / 20) % 100);
-        g2.setColor(new Color(59, 130, 246, Math.max(10, 80 - pulse)));
-        g2.drawOval(TARGET_WIDTH / 2 - 80 - pulse, TARGET_HEIGHT / 2 - 80 - pulse, 160 + pulse * 2, 160 + pulse * 2);
-
-        // Avatar trung tâm
-        g2.setColor(new Color(59, 130, 246));
-        g2.fillOval(TARGET_WIDTH / 2 - 60, TARGET_HEIGHT / 2 - 70, 120, 120);
-        g2.setColor(Color.WHITE);
-        g2.setFont(new Font("Segoe UI", Font.BOLD, 48));
-        String initial = client.getUsername() != null && !client.getUsername().isEmpty() ? client.getUsername().substring(0, 1).toUpperCase() : "U";
-        FontMetrics fm = g2.getFontMetrics();
-        g2.drawString(initial, TARGET_WIDTH / 2 - fm.stringWidth(initial) / 2, TARGET_HEIGHT / 2 + 10);
-
-        // Tên và thông số FPS / Timestamp
-        g2.setFont(new Font("Segoe UI", Font.BOLD, 18));
-        g2.drawString(client.getUsername(), TARGET_WIDTH / 2 - g2.getFontMetrics().stringWidth(client.getUsername()) / 2, TARGET_HEIGHT / 2 + 80);
-
-        g2.setFont(new Font("Consolas", Font.PLAIN, 12));
-        g2.setColor(new Color(148, 163, 184));
-        g2.drawString("● LIVE CAMERA  ·  20 FPS  ·  640x480  ·  " + String.format("%tT", now), 16, 26);
-
-        g2.dispose();
-        return img;
+        synchronized (this) {
+            if (socket != videoSocket || socket.isClosed() || currentMode != VideoMode.CAMERA) return null;
+            try {
+                if (camera == null) camera = new WindowsCamera();
+                return camera.nextFrame();
+            } catch (IOException e) {
+                closeCamera();
+                currentMode = VideoMode.OFF;
+                VideoFrameListener listener = frameListener;
+                if (listener != null) listener.onCameraUnavailable();
+                return generateOffFrame();
+            }
+        }
     }
 
     private BufferedImage generateOffFrame() {
@@ -288,7 +278,7 @@ public class VideoCallEngine {
         return img;
     }
 
-    private void sendFrameOverUdp(BufferedImage frame) throws IOException {
+    private void sendFrameOverUdp(DatagramSocket socket, BufferedImage frame) throws IOException {
         // Nén JPEG
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("jpg");
@@ -329,12 +319,13 @@ public class VideoCallEngine {
 
             System.arraycopy(jpegBytes, offset, packetData, 8, length);
 
-            DatagramPacket dPacket = new DatagramPacket(packetData, packetData.length, remoteAddress, remoteVideoPort);
-            videoSocket.send(dPacket);
+            DatagramPacket dPacket = new DatagramPacket(packetData, packetData.length);
+            socket.send(dPacket);
         }
     }
 
     public synchronized void stopVideo() {
+        closeCamera();
         isStreaming.set(false);
         isReceiving.set(false);
 

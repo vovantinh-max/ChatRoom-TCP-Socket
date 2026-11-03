@@ -103,7 +103,7 @@ public class ServerGUI extends JFrame {
     //  GUI CONSTRUCTION
     // ════════════════════════════════════════════════════════════════════════════
     private void createGUI() {
-        setTitle("TCP ChatRoom  ·  Server Admin Panel");
+        setTitle("TCP Chat · Quản lý máy chủ");
         setSize(980, 640);
         setMinimumSize(new Dimension(860, 560));
         setLocationRelativeTo(null);

@@ -2,6 +2,7 @@ package client.media.audio;
 
 import client.ChatClient;
 import shared.protocol.Packet;
+import shared.protocol.CallEndpoint;
 
 import javax.sound.sampled.*;
 import java.io.IOException;
@@ -39,10 +40,12 @@ public class AudioCallEngine {
     private static final int BUFFER_SIZE = 640; // 20ms of 16kHz 16-bit mono audio
 
     private final ChatClient client;
-    private AudioCallListener listener;
+    private volatile AudioCallListener listener;
 
-    private CallState state = CallState.IDLE;
+    private volatile CallState state = CallState.IDLE;
     private String currentPeer;
+    private String callId;
+    private boolean videoCall;
     private DatagramSocket udpSocket;
     private int localUdpPort = 0;
     private InetAddress remoteAddress;
@@ -96,132 +99,124 @@ public class AudioCallEngine {
     /**
      * Bắt đầu cuộc gọi thoại 1-1 tới người nhận.
      */
-    public synchronized boolean startCall(String recipient) {
-        if (state != CallState.IDLE) return false;
+    public boolean startCall(String recipient) {
+        return startCall(recipient, 0);
+    }
 
+    public synchronized boolean startCall(String recipient, int videoPort) {
+        if (state != CallState.IDLE) return false;
         try {
             initUdpSocket();
-            this.currentPeer = recipient;
+            currentPeer = recipient;
+            callId = java.util.UUID.randomUUID().toString();
+            videoCall = videoPort != 0;
             changeState(CallState.CALLING);
-
-            // Gửi CALL_OFFER qua TCP kèm cổng UDP của máy mình
-            client.sendCallOffer(recipient, "AUDIO", localUdpPort);
+            client.sendCallSignal(Packet.Type.CALL_OFFER, recipient, videoCall ? "VIDEO" : "AUDIO",
+                    new CallEndpoint(localUdpPort, videoPort, "").ports(), callId);
             return true;
-        } catch (Exception e) {
-            cleanupCall();
-            if (listener != null) listener.onError("Không thể khởi tạo cổng âm thanh: " + e.getMessage());
+        } catch (IOException e) {
+            finish();
             return false;
         }
     }
 
-    /**
-     * Chấp nhận cuộc gọi đến từ caller.
-     */
-    public synchronized boolean acceptCall(String caller, int callerUdpPort, String callerHost) {
-        if (state != CallState.RINGING) return false;
+    public boolean acceptCall(String caller, int callerUdpPort, String callerHost) {
+        return acceptCall(caller, new CallEndpoint(callerUdpPort, 0, callerHost), 0);
+    }
 
+    public synchronized boolean acceptCall(String caller, CallEndpoint endpoint, int videoPort) {
+        if (state != CallState.RINGING || !caller.equalsIgnoreCase(currentPeer)
+                || videoCall != (videoPort != 0)) return false;
         try {
-            this.currentPeer = caller;
-            this.remoteUdpPort = callerUdpPort;
-            this.remoteAddress = InetAddress.getByName(callerHost != null ? callerHost : "127.0.0.1");
-
-            // Báo lại bên kia qua TCP rằng đã nhận cuộc gọi
-            client.sendCallAnswer(caller, true, localUdpPort);
-
-            // Bắt đầu truyền và phát âm thanh
-            startMediaStreaming();
-            changeState(CallState.CONNECTED);
-            startDurationTimer();
+            connectMedia(endpoint);
+            client.sendCallSignal(Packet.Type.CALL_ANSWER, caller, "ACCEPT",
+                    new CallEndpoint(localUdpPort, videoPort, "").ports(), callId);
             return true;
-        } catch (Exception e) {
-            cleanupCall();
-            if (listener != null) listener.onError("Chấp nhận cuộc gọi thất bại: " + e.getMessage());
+        } catch (IOException e) {
+            rejectCall(caller, "MEDIA_UNAVAILABLE");
             return false;
         }
     }
 
-    /**
-     * Từ chối cuộc gọi đến.
-     */
     public synchronized void rejectCall(String caller, String reason) {
-        client.sendCallReject(caller, reason);
-        cleanupCall();
-        changeState(CallState.IDLE);
+        if (state != CallState.RINGING || !caller.equalsIgnoreCase(currentPeer)) return;
+        client.sendCallSignal(Packet.Type.CALL_REJECT, caller, reason, "", callId);
+        finish();
     }
 
-    /**
-     * Kết thúc cuộc gọi hiện tại.
-     */
     public synchronized void endCall() {
         if (state == CallState.IDLE) return;
-        if (currentPeer != null) {
-            client.sendCallEnd(currentPeer);
-        }
+        client.sendCallSignal(Packet.Type.CALL_END, currentPeer, "END", "", callId);
+        finish();
+    }
+
+    private void finish() {
         cleanupCall();
+        callId = null;
         changeState(CallState.ENDED);
         changeState(CallState.IDLE);
     }
 
-    /**
-     * Xử lý gói tin signaling điều phối cuộc gọi từ ServerListener.
-     */
-    public synchronized void handleSignalingPacket(Packet packet) {
-        if (packet == null) return;
-
-        switch (packet.getType()) {
-            case CALL_OFFER:
-                if (state == CallState.IDLE) {
-                    try {
-                        initUdpSocket();
-                        this.currentPeer = packet.getSender();
-                        int callerPort = 0;
-                        try { callerPort = Integer.parseInt(packet.getExtra()); } catch (NumberFormatException ignored) {}
-                        changeState(CallState.RINGING);
-                        if (listener != null) {
-                            listener.onIncomingCall(packet.getSender(), callerPort);
-                        }
-                    } catch (Exception e) {
-                        client.sendCallReject(packet.getSender(), "BUSY");
-                    }
-                } else {
-                    // Đang bận cuộc gọi khác
-                    client.sendCallReject(packet.getSender(), "BUSY");
-                }
-                break;
-
-            case CALL_ANSWER:
-                if (state == CallState.CALLING) {
-                    int peerPort = 0;
-                    try { peerPort = Integer.parseInt(packet.getExtra()); } catch (NumberFormatException ignored) {}
-                    try {
-                        this.remoteUdpPort = peerPort;
-                        this.remoteAddress = InetAddress.getByName("127.0.0.1");
-                        startMediaStreaming();
-                        changeState(CallState.CONNECTED);
-                        startDurationTimer();
-                    } catch (Exception e) {
-                        endCall();
-                    }
-                }
-                break;
-
-            case CALL_REJECT:
-                if (state == CallState.CALLING || state == CallState.RINGING) {
-                    cleanupCall();
-                    changeState(CallState.ENDED);
-                    changeState(CallState.IDLE);
-                }
-                break;
-
-            case CALL_END:
-                cleanupCall();
-                changeState(CallState.ENDED);
-                changeState(CallState.IDLE);
-                break;
-
-            default:
-                break;
+    public synchronized boolean handleSignalingPacket(Packet packet) {
+        if (packet == null) return false;
+        if (packet.getType() == Packet.Type.CALL_OFFER) {
+            if (state != CallState.IDLE) {
+                if (!packet.getId().equals(callId))
+                    client.sendCallSignal(Packet.Type.CALL_REJECT, packet.getSender(), "BUSY", "", packet.getId());
+                return false;
+            }
+            try {
+                CallEndpoint endpoint = CallEndpoint.parse(packet.getExtra());
+                boolean video = "VIDEO".equals(packet.getContent());
+                if (video != (endpoint.videoPort() != 0)) throw new IllegalArgumentException();
+                initUdpSocket();
+                currentPeer = packet.getSender();
+                callId = packet.getId();
+                videoCall = video;
+                changeState(CallState.RINGING);
+                if (listener != null) listener.onIncomingCall(currentPeer, endpoint.audioPort());
+                return true;
+            } catch (IOException | IllegalArgumentException e) {
+                client.sendCallSignal(Packet.Type.CALL_REJECT, packet.getSender(), "MEDIA_UNAVAILABLE", "", packet.getId());
+                return false;
+            }
         }
+        boolean fromServer = packet.getType() == Packet.Type.CALL_REJECT
+                && "OFFLINE".equals(packet.getExtra());
+        if (!packet.getId().equals(callId)
+                || (!fromServer && !packet.getSender().equalsIgnoreCase(currentPeer))) return false;
+        switch (packet.getType()) {
+            case CALL_ANSWER:
+                if (state != CallState.CALLING) return false;
+                try {
+                    CallEndpoint endpoint = CallEndpoint.parse(packet.getExtra());
+                    if (videoCall != (endpoint.videoPort() != 0)) return false;
+                    connectMedia(endpoint);
+                    return true;
+                } catch (IOException | IllegalArgumentException e) {
+                    endCall();
+                    return false;
+                }
+            case CALL_REJECT:
+                if (state != CallState.CALLING) return false;
+                finish();
+                return true;
+            case CALL_END:
+                finish();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void connectMedia(CallEndpoint endpoint) throws IOException {
+        remoteUdpPort = endpoint.audioPort();
+        remoteAddress = InetAddress.getByName(endpoint.host());
+        udpSocket.connect(remoteAddress, remoteUdpPort);
+        isMuted.set(false);
+        startMediaStreaming();
+        changeState(CallState.CONNECTED);
+        startDurationTimer();
     }
 
     private void initUdpSocket() throws SocketException {

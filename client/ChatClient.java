@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.concurrent.*;
 
 /**
- * ChatClient - Phiên bản nâng cấp cho Messenger Desktop Pro.
+ * ChatClient - Phiên bản nâng cấp cho TCP Chat.
  * Quản lý kết nối TCP Socket, Đăng ký, Đăng nhập với mật khẩu,
  * Quản lý Bạn bè thời gian thực và Heartbeat Ping-Pong.
  */
@@ -380,28 +380,14 @@ public class ChatClient {
 
     // ─── SIGNALING CUỘC GỌI (MODULE 4, 5, 6, 7) ──────────────────────────────
     public void sendCallOffer(String recipient, String callType, int udpPort) {
-        if (!connected) return;
-        Packet packet = new Packet(Packet.Type.CALL_OFFER, username, recipient, callType);
-        packet.setExtra(String.valueOf(udpPort));
-        sendPacket(packet);
+        sendCallSignal(Packet.Type.CALL_OFFER, recipient, callType, String.valueOf(udpPort), null);
     }
 
-    public void sendCallAnswer(String caller, boolean accepted, int udpPort) {
+    public void sendCallSignal(Packet.Type type, String recipient, String content, String extra, String id) {
         if (!connected) return;
-        Packet packet = new Packet(accepted ? Packet.Type.CALL_ANSWER : Packet.Type.CALL_REJECT, username, caller, accepted ? "ACCEPT" : "REJECT");
-        packet.setExtra(String.valueOf(udpPort));
-        sendPacket(packet);
-    }
-
-    public void sendCallEnd(String target) {
-        if (!connected) return;
-        Packet packet = new Packet(Packet.Type.CALL_END, username, target, "END");
-        sendPacket(packet);
-    }
-
-    public void sendCallReject(String caller, String reason) {
-        if (!connected) return;
-        Packet packet = new Packet(Packet.Type.CALL_REJECT, username, caller, reason != null ? reason : "BUSY");
+        Packet packet = new Packet(type, username, recipient, content);
+        if (id != null) packet.setId(id);
+        packet.setExtra(extra);
         sendPacket(packet);
     }
 

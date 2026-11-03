@@ -331,6 +331,33 @@ public class Phase4To7MediaAndFileIntegrationTest {
         assertTrue("Khởi tạo cổng UDP video của Alice", video1.initVideoPort());
         assertTrue("Khởi tạo cổng UDP video của Bob", video2.initVideoPort());
 
+        AudioCallEngine audio1 = new AudioCallEngine(c1);
+        AudioCallEngine audio2 = new AudioCallEngine(c2);
+        var offer = new java.util.concurrent.CompletableFuture<shared.protocol.CallEndpoint>();
+        var answer = new java.util.concurrent.CompletableFuture<shared.protocol.CallEndpoint>();
+        var ended = new CountDownLatch(1);
+        c1.setEventListener(callListener(packet -> {
+            if (audio1.handleSignalingPacket(packet) && packet.getType() == Packet.Type.CALL_ANSWER)
+                answer.complete(shared.protocol.CallEndpoint.parse(packet.getExtra()));
+        }));
+        c2.setEventListener(callListener(packet -> {
+            if (!audio2.handleSignalingPacket(packet)) return;
+            if (packet.getType() == Packet.Type.CALL_OFFER && "VIDEO".equals(packet.getContent()))
+                offer.complete(shared.protocol.CallEndpoint.parse(packet.getExtra()));
+            if (packet.getType() == Packet.Type.CALL_END) ended.countDown();
+        }));
+
+        assertTrue("Alice gửi yêu cầu gọi VIDEO", audio1.startCall(u2, video1.getLocalVideoPort()));
+        var aliceEndpoint = offer.get(3, TimeUnit.SECONDS);
+        assertEquals("Bob đang đổ chuông", AudioCallEngine.CallState.RINGING, audio2.getState());
+        assertEquals("Bob nhận đúng cổng video của Alice", video1.getLocalVideoPort(), aliceEndpoint.videoPort());
+        assertTrue("Bob nhận địa chỉ kết nối từ máy chủ",
+                java.net.InetAddress.getByName(aliceEndpoint.host()).isLoopbackAddress());
+        assertTrue("Alice chưa nhận được phản hồi trước khi Bob chấp nhận", !answer.isDone());
+        assertTrue("Bob chấp nhận cuộc gọi video", audio2.acceptCall(u1, aliceEndpoint, video2.getLocalVideoPort()));
+        var bobEndpoint = answer.get(3, TimeUnit.SECONDS);
+        assertEquals("Alice nhận đúng cổng video của Bob", video2.getLocalVideoPort(), bobEndpoint.videoPort());
+
         CountDownLatch frameLatch = new CountDownLatch(1);
         AtomicReference<BufferedImage> receivedImgRef = new AtomicReference<>();
 
@@ -346,8 +373,10 @@ public class Phase4To7MediaAndFileIntegrationTest {
         });
 
         // Bắt đầu truyền video từ Alice tới Bob
-        video2.startVideoStreaming(u1, "127.0.0.1", video1.getLocalVideoPort());
-        video1.startVideoStreaming(u2, "127.0.0.1", video2.getLocalVideoPort());
+        video2.setVideoMode(VideoCallEngine.VideoMode.OFF);
+        video2.startVideoStreaming(u1, aliceEndpoint.host(), aliceEndpoint.videoPort());
+        video1.setVideoMode(VideoCallEngine.VideoMode.OFF); // UDP test does not require a physical camera.
+        video1.startVideoStreaming(u2, bobEndpoint.host(), bobEndpoint.videoPort());
 
         boolean frameReceived = frameLatch.await(4, TimeUnit.SECONDS);
         assertTrue("Bob nhận được Frame Video nén từ Alice qua UDP", frameReceived);
@@ -364,8 +393,22 @@ public class Phase4To7MediaAndFileIntegrationTest {
         try { Thread.sleep(500); } catch (InterruptedException ignored) {}
 
         // Dừng video streaming
+        audio1.endCall();
+        assertTrue("Cúp máy kết thúc phiên video ở đầu bên kia", ended.await(3, TimeUnit.SECONDS));
         video1.stopVideo();
         video2.stopVideo();
         assertTrue("Dừng luồng video streaming thành công", true);
+    }
+
+    private static ChatClient.ChatEventListener callListener(java.util.function.Consumer<Packet> handler) {
+        return new ChatClient.ChatEventListener() {
+            @Override public void onMessageReceived(String sender, String message) {}
+            @Override public void onPrivateMessageReceived(String sender, String receiver, String message) {}
+            @Override public void onUserListUpdated(java.util.List<String> users) {}
+            @Override public void onRoomListUpdated(java.util.List<String> rooms) {}
+            @Override public void onSystemMessage(String message) {}
+            @Override public void onDisconnected(String reason) {}
+            @Override public void onCallPacketReceived(Packet packet) { handler.accept(packet); }
+        };
     }
 }

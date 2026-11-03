@@ -32,7 +32,7 @@ public final class FriendsDialog extends JDialog {
     private String operationTarget;
 
     public FriendsDialog(JFrame owner, ChatClient client, Consumer<String> openChat) {
-        super(owner, "Bạn bè · Messenger", false);
+        super(owner, "Bạn bè · TCP Chat", false);
         this.client = client;
         this.openChat = openChat;
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
